@@ -19,6 +19,7 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
   const [uploading, setUploading] = useState(false);
 
   const repayActive = type === "expense" && tags.some((tg) => tagConfig[tg]?.repay);
+  const invoiceActive = type !== "transfer" && tags.some((tg) => tagConfig[tg]?.invoice);
 
   const addTag = (raw) => {
     const clean = raw.trim().toLowerCase().replace(/\s+/g, "-");
@@ -128,7 +129,7 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
         </div>
       )}
 
-      {type !== "transfer" && (
+      {invoiceActive && (
         <>
           <label style={lbl(t)}>Invoice / receipt <span style={{ color: t.dim }}>(optional)</span></label>
           {invoice ? (

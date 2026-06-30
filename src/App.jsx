@@ -28,23 +28,45 @@ export default function App() {
   const [formGroup, setFormGroup] = useState(null);
   const [viewingInvoice, setViewingInvoice] = useState(null);
 
+  // shared post-auth load (used by both explicit and silent sign-in)
+  const afterAuth = useCallback(async () => {
+    setSignedIn(true);
+    let loaded = await drive.loadLedger();
+    if (!loaded) { loaded = emptyState(); await drive.saveLedger(loaded); }
+    loaded.groups ||= []; loaded.tagConfig ||= {}; loaded.accounts ||= []; loaded.tx ||= [];
+    setData(loaded);
+    setCurrentAccount(loaded.accounts[0]?.id || null);
+  }, []);
+
   // ── sign in + load ──────────────────────────────────────────────────────────
   const connect = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       await drive.signIn();
-      setSignedIn(true);
-      let loaded = await drive.loadLedger();
-      if (!loaded) { loaded = emptyState(); await drive.saveLedger(loaded); }
-      // migrate: ensure required arrays exist
-      loaded.groups ||= []; loaded.tagConfig ||= {}; loaded.accounts ||= []; loaded.tx ||= [];
-      setData(loaded);
-      setCurrentAccount(loaded.accounts[0]?.id || null);
+      await afterAuth();
     } catch (e) {
       setError(e.message === "AUTH_EXPIRED" ? "Session expired — sign in again." : ("Couldn't connect: " + e.message));
       setSignedIn(false);
     } finally { setLoading(false); }
-  }, []);
+  }, [afterAuth]);
+
+  // ── silent re-auth on open ────────────────────────────────────────────────────
+  // After the PIN unlocks, try a no-popup token grant. If the user linked Drive
+  // in a past session, this connects invisibly — no button press. If Google needs
+  // interaction, we silently fall back to showing the "Sign in" button.
+  const triedSilent = useRef(false);
+  useEffect(() => {
+    if (!unlocked || signedIn || triedSilent.current || clientIdMissing) return;
+    triedSilent.current = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const tok = await drive.trySilentSignIn();
+        if (tok) await afterAuth();
+      } catch { /* fall back to button */ }
+      finally { setLoading(false); }
+    })();
+  }, [unlocked, signedIn, afterAuth]);
 
   // ── debounced auto-save to Drive ──────────────────────────────────────────────
   const saveTimer = useRef(null);

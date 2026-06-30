@@ -109,13 +109,29 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
   const [selected, setSelected] = useState([]);
   const [mode, setMode] = useState("AND");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [datePreset, setDatePreset] = useState("all");
+
+  const applyPreset = (preset) => {
+    setDatePreset(preset);
+    const now = new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    if (preset === "all") { setFromDate(""); setToDate(""); }
+    else if (preset === "month") { setFromDate(iso(new Date(now.getFullYear(), now.getMonth(), 1))); setToDate(iso(new Date(now.getFullYear(), now.getMonth() + 1, 0))); }
+    else if (preset === "lastmonth") { setFromDate(iso(new Date(now.getFullYear(), now.getMonth() - 1, 1))); setToDate(iso(new Date(now.getFullYear(), now.getMonth(), 0))); }
+    else if (preset === "3mo") { setFromDate(iso(new Date(now.getFullYear(), now.getMonth() - 2, 1))); setToDate(iso(new Date(now.getFullYear(), now.getMonth() + 1, 0))); }
+    else if (preset === "year") { setFromDate(iso(new Date(now.getFullYear(), 0, 1))); setToDate(iso(new Date(now.getFullYear(), 11, 31))); }
+  };
 
   const scopeTx = useMemo(() => tx.filter((x) => {
     if (acctFilter !== "all" && x.account !== acctFilter && x.toAccount !== acctFilter) return false;
     if (groupFilter === "none" && x.group) return false;
     if (groupFilter !== "all" && groupFilter !== "none" && x.group !== groupFilter) return false;
+    if (fromDate && x.date < fromDate) return false;
+    if (toDate && x.date > toDate) return false;
     return true;
-  }), [tx, acctFilter, groupFilter]);
+  }), [tx, acctFilter, groupFilter, fromDate, toDate]);
 
   const scopeTags = useMemo(() => [...new Set(scopeTx.flatMap((x) => x.tags))].sort(), [scopeTx]);
   const toggle = (tag) => setSelected((s) => s.includes(tag) ? s.filter((x) => x !== tag) : [...s, tag]);
@@ -142,6 +158,7 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
     else if (groupFilter !== "all") parts.push(grp(groupFilter)?.name);
     if (selected.length) parts.push(selected.join(mode === "AND" ? " + " : " / "));
     if (typeFilter !== "all") parts.push(typeFilter);
+    if (fromDate || toDate) parts.push(`${fromDate || "start"} → ${toDate || "now"}`);
     return parts.join(" · ") || "All transactions";
   };
 
@@ -168,6 +185,17 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
           <option value="expense">Expense</option>
           <option value="transfer">Transfer</option>
         </select>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        {[["all", "All time"], ["month", "This month"], ["lastmonth", "Last month"], ["3mo", "Last 3 mo"], ["year", "This year"]].map(([id, label]) => (
+          <button key={id} onClick={() => applyPreset(id)} style={{ ...pill(t), cursor: "pointer", fontSize: 12, padding: "6px 11px", background: datePreset === id ? t.accent : t.card, color: datePreset === id ? "#fff" : t.text, border: `1px solid ${datePreset === id ? t.accent : t.line}` }}>{label}</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14 }}>
+        <input type="date" value={fromDate} onChange={(e) => { setFromDate(e.target.value); setDatePreset("custom"); }} style={{ ...sel(t), flex: 1 }} />
+        <span style={{ color: t.dim, fontSize: 13 }}>to</span>
+        <input type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setDatePreset("custom"); }} style={{ ...sel(t), flex: 1 }} />
       </div>
 
       <div style={{ fontSize: 12, letterSpacing: 1, color: t.dim, margin: "2px 2px 10px" }}>
@@ -454,6 +482,7 @@ function BulkTagInput({ t, allTags, onApply }) {
 function TagFeatures({ t, allTags, tagConfig, setTagConfig }) {
   const [openFeature, setOpenFeature] = useState(null);
   const toggleRepay = (tag) => setTagConfig((c) => ({ ...c, [tag]: { ...c[tag], repay: !c[tag]?.repay } }));
+  const toggleInvoice = (tag) => setTagConfig((c) => ({ ...c, [tag]: { ...c[tag], invoice: !c[tag]?.invoice } }));
   const FEATURES = [
     {
       id: "repay", name: "Repayment tracking",
@@ -466,6 +495,22 @@ function TagFeatures({ t, allTags, tagConfig, setTagConfig }) {
             <div key={tag} style={{ borderBottom: `1px solid ${t.line}`, padding: "12px 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 15 }}>{tag}</span>
               <Toggle t={t} on={!!tagConfig[tag]?.repay} onClick={() => toggleRepay(tag)} />
+            </div>
+          ))}
+        </>
+      ),
+    },
+    {
+      id: "invoice", name: "Invoice attachment",
+      desc: "Transactions with an enabled tag get an option to attach a receipt/invoice image, stored in your Drive.",
+      countOn: allTags.filter((tg) => tagConfig[tg]?.invoice).length,
+      render: () => (
+        <>
+          {allTags.length === 0 && <div style={{ color: t.dim, fontSize: 14 }}>No tags yet — add some transactions first.</div>}
+          {allTags.map((tag) => (
+            <div key={tag} style={{ borderBottom: `1px solid ${t.line}`, padding: "12px 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 15 }}>{tag}</span>
+              <Toggle t={t} on={!!tagConfig[tag]?.invoice} onClick={() => toggleInvoice(tag)} />
             </div>
           ))}
         </>

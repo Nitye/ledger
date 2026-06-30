@@ -21,6 +21,11 @@ let tokenClient = null;
 let ledgerFileId = null;     // cached id of ledger-data.json once found/created
 let receiptsFolderId = null; // cached id of the receipts folder
 
+// We never store the access token on disk (that would be a security risk). We
+// only store a harmless boolean: "this user has linked Drive before", so on app
+// open we know to ATTEMPT a silent, no-popup token refresh.
+const CONNECTED_FLAG = "ledger_drive_connected";
+
 // Load the GIS script once.
 function loadGis() {
   return new Promise((resolve, reject) => {
@@ -43,11 +48,36 @@ export async function signIn() {
       callback: (resp) => {
         if (resp.error) return reject(new Error(resp.error));
         accessToken = resp.access_token;
+        localStorage.setItem(CONNECTED_FLAG, "1"); // remember the user has linked Drive
         resolve(accessToken);
       },
     });
-    tokenClient.requestAccessToken({ prompt: "" }); // "" = silent if already granted
+    tokenClient.requestAccessToken({ prompt: "consent" }); // explicit click → may show consent
   });
+}
+
+// Attempt a SILENT token grant — no popup, no consent screen. Works only if the
+// user has already granted access in a prior session. Used on app open so you
+// don't click "Sign in" every time. Resolves null if Google needs interaction
+// (in which case we fall back to showing the button).
+export function trySilentSignIn() {
+  if (localStorage.getItem(CONNECTED_FLAG) !== "1") return Promise.resolve(null);
+  return loadGis().then(() => new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: (resp) => {
+        if (resp.error || !resp.access_token) return done(null);
+        accessToken = resp.access_token;
+        done(accessToken);
+      },
+      error_callback: () => done(null), // e.g. consent needed, popup blocked
+    });
+    try { tokenClient.requestAccessToken({ prompt: "none" }); } catch { done(null); }
+    setTimeout(() => done(null), 4000); // safety: don't hang the app on open
+  }));
 }
 
 export function signOut() {
@@ -55,6 +85,7 @@ export function signOut() {
     window.google.accounts.oauth2.revoke(accessToken, () => {});
   }
   accessToken = null; ledgerFileId = null; receiptsFolderId = null;
+  localStorage.removeItem(CONNECTED_FLAG); // explicit logout → require button next time
 }
 
 export function isSignedIn() { return !!accessToken; }
