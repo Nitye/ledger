@@ -24,6 +24,8 @@ export default function App() {
   const [driveEmail, setDriveEmail] = useState(null);
   const [currentAccount, setCurrentAccount] = useState(null);
   const [view, setView] = useState("home");
+  // v2: Home search + date filter, lifted here so it persists across view changes
+  const [homeFilter, setHomeFilter] = useState({ search: "", preset: "all", from: "", to: "" });
   const [editing, setEditing] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formGroup, setFormGroup] = useState(null);
@@ -165,7 +167,7 @@ export default function App() {
       </div>
 
       <div style={styles.body}>
-        {view === "home" && <Home t={t} accounts={data.accounts} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} tx={data.tx} acct={acct} grp={grp} tagConfig={data.tagConfig} onEdit={(x) => { setEditing(x); setShowForm(true); }} onDelete={deleteTx} onViewInvoice={setViewingInvoice} />}
+        {view === "home" && <Home t={t} accounts={data.accounts} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} tx={data.tx} acct={acct} grp={grp} groups={data.groups} tagConfig={data.tagConfig} allTags={allTags} homeFilter={homeFilter} setHomeFilter={setHomeFilter} setTx={setTx} setAccounts={setAccounts} setGroups={setGroups} onEdit={(x) => { setEditing(x); setShowForm(true); }} onDelete={deleteTx} onViewInvoice={setViewingInvoice} />}
         {view === "analyze" && <Analyze t={t} tx={data.tx} acct={acct} grp={grp} accounts={data.accounts} groups={data.groups} tagConfig={data.tagConfig} />}
         {view === "owed" && <Owed t={t} tx={data.tx} acct={acct} tagConfig={data.tagConfig} onAddRepayment={addRepayment} onRemoveRepayment={removeRepayment} onEdit={(x) => { setEditing(x); setShowForm(true); }} />}
         {view === "settings" && <Settings t={t} accounts={data.accounts} setAccounts={setAccounts} groups={data.groups} setGroups={setGroups} tx={data.tx} setTx={setTx} allTags={allTags} tagConfig={data.tagConfig} setTagConfig={setTagConfig} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} onAddToGroup={openAdd} onSignOut={signOut} driveEmail={driveEmail} />}

@@ -36,6 +36,21 @@ v1 data to Drive as `ledger-data-backup-v1.json`.
   keep powering any other features enabled on them, but are hidden on Home, in
   Analyze (including tag slicing), and in PDF exports. Visible only in the
   add/edit form. Features stack, so one tag can be e.g. ghost + proof.
+- **Home search, date filter, and multi-select** — Home became a working list
+  rather than a static feed:
+  - A **note search** box that matches as you type (typing `lu` keeps both
+    "Lunch" and "Luggage"; deleting a character re-widens live).
+  - A **date filter** — All / 7 days / 30 days / Month / Custom — on a single
+    row. Search text and date range **persist** across tab changes.
+  - The list shows the **15 most recent** by default with a **Show all / Show
+    less** toggle that respects the active search and date slice.
+  - **Multi-select** with checkboxes and a Select-all that operates on the
+    *filtered* slice only (filter to last week, Select all, get last week).
+    Selected transactions can be bulk **tagged**, **added to a group**, or
+    **moved to another account** — each via a picker that can also create a new
+    group/account inline. Adding to a group that some selected already belong to
+    prompts an override confirmation (an expense can only be in one group); a
+    brand-new group skips the prompt. Actions clear the selection when done.
 
 ### Improvements & fixes
 
@@ -49,6 +64,10 @@ v1 data to Drive as `ledger-data-backup-v1.json`.
   group, and type filters, including a "No mode set" option that surfaces
   pre-v2 entries. When filtering by a specific mode, split payments count only
   that mode's share of the amount.
+- **Analyze NOT filter** — a NOT toggle alongside AND/OR inverts the tag match,
+  so you can slice for everything that *doesn't* fit a tag combination (e.g.
+  NOT (hotel AND food)). Greyed out until a tag is selected; combines with
+  AND/OR as a set operation and is reflected in exported PDF headings.
 - **PDF statements** gained a payment-mode column (shown only when mode data
   exists), list the items of combined entries, and include receiver names.
 
