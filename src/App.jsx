@@ -6,6 +6,7 @@ import * as drive from "./lib/drive";
 import PinGate from "./components/PinGate.jsx";
 import TxForm from "./components/TxForm.jsx";
 import { Home, Analyze, Owed, Settings, InvoiceViewer } from "./components/Views.jsx";
+import TripManager from "./components/TripManager.jsx";
 
 const clientIdMissing = !GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.startsWith("PASTE_");
 
@@ -24,6 +25,8 @@ export default function App() {
   const [driveEmail, setDriveEmail] = useState(null);
   const [currentAccount, setCurrentAccount] = useState(null);
   const [view, setView] = useState("home");
+  // v3: trip manager — when activeTripId is set, the whole UI switches to trip mode
+  const [activeTripId, setActiveTripId] = useState(null);
   // v2: Home search + date filter, lifted here so it persists across view changes
   const [homeFilter, setHomeFilter] = useState({ search: "", preset: "all", from: "", to: "" });
   const [editing, setEditing] = useState(null);
@@ -37,14 +40,18 @@ export default function App() {
     setDriveEmail(drive.getDriveEmail());
     let loaded = await drive.loadLedger();
     if (!loaded) { loaded = emptyState(); await drive.saveLedger(loaded); }
-    // v2 migration: normalizes containers and bumps version — never rewrites
-    // transactions (all new fields are optional). If this is v1 data, write a
-    // one-time safety copy (ledger-data-backup-v1.json) to Drive BEFORE the
-    // migrated version is ever saved. If the backup fails, we keep running on
-    // the migrated data in memory but never persist the version bump.
-    const { data: migrated, fromV1 } = migrateLedger(loaded);
+    // v2/v3 migration: normalizes containers and bumps version — never
+    // rewrites transactions (all new fields are optional). If this is v1 or
+    // v2 data, write a one-time safety copy to Drive BEFORE the migrated
+    // version is ever saved. If the backup fails, we keep running on the
+    // migrated data in memory but never persist the version bump.
+    const { data: migrated, fromV1, fromV2 } = migrateLedger(loaded);
     if (fromV1) {
       try { await drive.backupLedgerV1(loaded); await drive.saveLedger(migrated); }
+      catch { /* backup failed → don't persist yet; next open retries */ }
+    }
+    if (fromV2) {
+      try { await drive.backupLedgerV2(loaded); await drive.saveLedger(migrated); }
       catch { /* backup failed → don't persist yet; next open retries */ }
     }
     setData(migrated);
@@ -107,6 +114,15 @@ export default function App() {
   const setGroups = (updater) => setData((d) => ({ ...d, groups: typeof updater === "function" ? updater(d.groups) : updater }));
   const setTagConfig = (updater) => setData((d) => ({ ...d, tagConfig: typeof updater === "function" ? updater(d.tagConfig) : updater }));
 
+  // v3: trip updater — replaces a single trip in the trips array
+  const setTrip = useCallback((tripId, updater) => {
+    setData((d) => ({
+      ...d,
+      trips: d.trips.map((t) => t.id === tripId ? (typeof updater === "function" ? updater(t) : updater) : t),
+    }));
+  }, []);
+  const addTrip = (trip) => setData((d) => ({ ...d, trips: [...d.trips, trip] }));
+
   const saveTx = (item) => { setTx((prev) => { const ex = prev.find((p) => p.id === item.id); return ex ? prev.map((p) => p.id === item.id ? item : p) : [item, ...prev]; }); setShowForm(false); setEditing(null); setFormGroup(null); };
   const deleteTx = (id) => setTx((prev) => prev.filter((p) => p.id !== id));
   const addRepayment = (id, amount) => setTx((prev) => prev.map((p) => p.id === id ? { ...p, repayments: [...(p.repayments || []), { id: uid(), amount, date: todayISO() }] } : p));
@@ -141,6 +157,23 @@ export default function App() {
 
   if (!data) return <Centered t={t}><div style={{ color: t.dim }}>Loading your ledger…</div></Centered>;
 
+  // ── v3: if a trip is active, render the Trip Manager instead ───────────────
+  if (activeTripId) {
+    const trip = data.trips.find((tr) => tr.id === activeTripId);
+    if (!trip) { setActiveTripId(null); return null; }
+    return (
+      <TripManager
+        t={t} dark={dark} setDark={setDark} syncState={syncState}
+        trip={trip}
+        allTrips={data.trips}
+        setTrip={(updater) => setTrip(activeTripId, updater)}
+        addTrip={addTrip}
+        onSwitchTrip={(id) => setActiveTripId(id)}
+        onBackToLedger={() => setActiveTripId(null)}
+      />
+    );
+  }
+
   const netWorth = data.accounts.reduce((s, a) => s + (function bal() {
     let b = 0; for (const x of data.tx) {
       if (x.type === "income" && x.account === a.id) b += x.amount;
@@ -170,7 +203,7 @@ export default function App() {
         {view === "home" && <Home t={t} accounts={data.accounts} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} tx={data.tx} acct={acct} grp={grp} groups={data.groups} tagConfig={data.tagConfig} allTags={allTags} homeFilter={homeFilter} setHomeFilter={setHomeFilter} setTx={setTx} setAccounts={setAccounts} setGroups={setGroups} onEdit={(x) => { setEditing(x); setShowForm(true); }} onDelete={deleteTx} onViewInvoice={setViewingInvoice} />}
         {view === "analyze" && <Analyze t={t} tx={data.tx} acct={acct} grp={grp} accounts={data.accounts} groups={data.groups} tagConfig={data.tagConfig} />}
         {view === "owed" && <Owed t={t} tx={data.tx} acct={acct} tagConfig={data.tagConfig} onAddRepayment={addRepayment} onRemoveRepayment={removeRepayment} onEdit={(x) => { setEditing(x); setShowForm(true); }} />}
-        {view === "settings" && <Settings t={t} accounts={data.accounts} setAccounts={setAccounts} groups={data.groups} setGroups={setGroups} tx={data.tx} setTx={setTx} allTags={allTags} tagConfig={data.tagConfig} setTagConfig={setTagConfig} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} onAddToGroup={openAdd} onSignOut={signOut} driveEmail={driveEmail} />}
+        {view === "settings" && <Settings t={t} accounts={data.accounts} setAccounts={setAccounts} groups={data.groups} setGroups={setGroups} tx={data.tx} setTx={setTx} allTags={allTags} tagConfig={data.tagConfig} setTagConfig={setTagConfig} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} onAddToGroup={openAdd} onSignOut={signOut} driveEmail={driveEmail} trips={data.trips} onOpenTrip={(id) => setActiveTripId(id)} addTrip={addTrip} />}
       </div>
 
       {showForm && <TxForm t={t} accounts={data.accounts} groups={data.groups} allTags={allTags} tagConfig={data.tagConfig} initial={editing} defaultAccount={currentAccount} defaultGroup={formGroup} onSave={saveTx} onClose={() => { setShowForm(false); setEditing(null); setFormGroup(null); }} />}

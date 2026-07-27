@@ -18,7 +18,7 @@
 //   Google genuinely needs it, e.g. the very first consent).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { GOOGLE_CLIENT_ID, AUTH_SCOPES, LEDGER_FILENAME, RECEIPTS_FOLDER, BACKUP_FILENAME } from "./config";
+import { GOOGLE_CLIENT_ID, AUTH_SCOPES, LEDGER_FILENAME, RECEIPTS_FOLDER, BACKUP_FILENAME, BACKUP_V2_FILENAME } from "./config";
 
 let accessToken = null;
 let tokenClient = null;
@@ -189,6 +189,14 @@ export async function backupLedgerV1(data) {
   const existing = await findFileIdByName(BACKUP_FILENAME);
   if (existing) return true;
   await createJsonFile(BACKUP_FILENAME, JSON.stringify(data));
+  return true;
+}
+
+// One-time v2 safety copy before v3 (trips feature). Same logic as v1 backup.
+export async function backupLedgerV2(data) {
+  const existing = await findFileIdByName(BACKUP_V2_FILENAME);
+  if (existing) return true;
+  await createJsonFile(BACKUP_V2_FILENAME, JSON.stringify(data));
   return true;
 }
 

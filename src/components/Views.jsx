@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Modal, Seg, Stat, Toggle, COLORS, pill, inp, sel, lbl, primaryBtn, secondaryBtn, miniBtn } from "../lib/ui.jsx";
-import { fmt, niceDate, uid, received, outstanding, isRepayable, balanceOf, MODES, modeShort, visibleTags, isGhost } from "../lib/model";
+import { fmt, niceDate, uid, received, outstanding, isRepayable, balanceOf, MODES, modeShort, visibleTags, isGhost, emptyTrip } from "../lib/model";
 import { exportStatement } from "../lib/pdf";
 import { receiptUrl } from "../lib/drive";
 
@@ -633,7 +633,7 @@ function RepaymentInput({ t, max, onCancel, onSubmit }) {
 }
 
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
-export function Settings({ t, accounts, setAccounts, groups, setGroups, tx, setTx, allTags, tagConfig, setTagConfig, currentAccount, setCurrentAccount, onAddToGroup, onSignOut, driveEmail }) {
+export function Settings({ t, accounts, setAccounts, groups, setGroups, tx, setTx, allTags, tagConfig, setTagConfig, currentAccount, setCurrentAccount, onAddToGroup, onSignOut, driveEmail, trips, onOpenTrip, addTrip }) {
   const [tab, setTab] = useState("accounts");
   return (
     <div>
@@ -645,6 +645,32 @@ export function Settings({ t, accounts, setAccounts, groups, setGroups, tx, setT
       {tab === "accounts" && <AccountsManager t={t} accounts={accounts} setAccounts={setAccounts} tx={tx} setTx={setTx} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} />}
       {tab === "groups" && <GroupsManager t={t} groups={groups} setGroups={setGroups} tx={tx} setTx={setTx} allTags={allTags} onAddToGroup={onAddToGroup} />}
       {tab === "tags" && <TagFeatures t={t} allTags={allTags} tagConfig={tagConfig} setTagConfig={setTagConfig} />}
+
+      {/* v3: trip manager entry point */}
+      {trips && (
+        <div style={{ marginTop: 28, paddingTop: 18, borderTop: `1px solid ${t.line}` }}>
+          <div style={{ fontSize: 12, letterSpacing: 1, color: t.dim, marginBottom: 10 }}>TRIPS</div>
+          {trips.filter((tr) => tr.status === "active").map((tr) => (
+            <button key={tr.id} onClick={() => onOpenTrip(tr.id)} style={{ width: "100%", textAlign: "left", padding: "14px 16px", borderRadius: 14, border: `1px solid ${t.accent}44`, background: t.accent + "11", cursor: "pointer", color: t.text, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>✈ {tr.name}</div>
+                <div style={{ fontSize: 12, color: t.dim, marginTop: 3 }}>{tr.startDate}{tr.endDate ? ` → ${tr.endDate}` : ""} · {tr.members.length} members · {tr.currencies.join(", ")}</div>
+              </div>
+              <span style={{ ...pill(t), background: t.green + "22", color: t.green, fontSize: 10 }}>ACTIVE</span>
+            </button>
+          ))}
+          {trips.filter((tr) => tr.status === "archived").map((tr) => (
+            <button key={tr.id} onClick={() => onOpenTrip(tr.id)} style={{ width: "100%", textAlign: "left", padding: "12px 16px", borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, cursor: "pointer", color: t.text, marginBottom: 8, opacity: 0.6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 500 }}>✈ {tr.name}</div>
+                <div style={{ fontSize: 12, color: t.dim, marginTop: 3 }}>{tr.startDate}{tr.endDate ? ` → ${tr.endDate}` : ""}</div>
+              </div>
+              <span style={{ ...pill(t), fontSize: 10 }}>ARCHIVED</span>
+            </button>
+          ))}
+          <button style={{ width: "100%", padding: 12, borderRadius: 14, cursor: "pointer", color: t.accent, border: `1px dashed ${t.accent}88`, background: "transparent", fontSize: 14 }} onClick={() => { const tr = emptyTrip(); addTrip(tr); onOpenTrip(tr.id); }}>+ New trip</button>
+        </div>
+      )}
 
       <div style={{ marginTop: 28, paddingTop: 18, borderTop: `1px solid ${t.line}` }}>
         <div style={{ fontSize: 12, color: t.dim, marginBottom: 8 }}>Synced to Google Drive{driveEmail ? ` · ${driveEmail}` : ""}</div>

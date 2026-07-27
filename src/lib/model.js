@@ -47,12 +47,11 @@ export function emptyState() {
   };
 }
 
-// ── v1 → v2 migration ─────────────────────────────────────────────────────────
-// Deliberately non-destructive: every v2 field (payments, items, receiver,
-// proof; tagConfig keys proof/receiver/ghost) is OPTIONAL, read with fallbacks
-// throughout the UI. So migration only normalizes top-level containers and
-// bumps the version — it never rewrites a single transaction.
-// Returns { data, fromV1 } so the caller can write a one-time backup first.
+// ── v1 → v2 → v3 migration ────────────────────────────────────────────────────
+// Deliberately non-destructive: every new field is OPTIONAL, read with
+// fallbacks throughout the UI. Migration normalizes top-level containers
+// and bumps the version — it never rewrites a single transaction.
+// Returns { data, fromV1, fromV2 } so the caller can write backups first.
 export function migrateLedger(raw) {
   const data = { ...raw };
   data.accounts ||= [];
@@ -60,8 +59,70 @@ export function migrateLedger(raw) {
   data.tagConfig ||= {};
   data.tx ||= [];
   const fromV1 = (data.version || 1) < 2;
-  data.version = 2;
-  return { data, fromV1 };
+  // v3: trips array — optional, defaults to empty
+  data.trips ||= [];
+  const fromV2 = (data.version || 1) === 2;
+  data.version = 3;
+  return { data, fromV1, fromV2 };
+}
+
+// ── Trip model helpers ────────────────────────────────────────────────────────
+
+export const CURRENCY_SYMBOLS = {
+  INR: "₹", USD: "$", VND: "₫", THB: "฿", EUR: "€", GBP: "£", JPY: "¥",
+  SGD: "S$", MYR: "RM", AED: "د.إ", KRW: "₩", IDR: "Rp", PHP: "₱",
+  CNY: "¥", HKD: "HK$", TWD: "NT$", BDT: "৳", LKR: "Rs", NPR: "Rs",
+  AUD: "A$", NZD: "NZ$", CAD: "C$", CHF: "Fr",
+};
+
+export const fmtCurrency = (amount, cur) => {
+  const sym = CURRENCY_SYMBOLS[cur] || (cur + " ");
+  const abs = Math.abs(amount);
+  const neg = amount < 0 ? "−" : "";
+  if (cur === "VND" || cur === "KRW" || cur === "IDR")
+    return neg + sym + abs.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  if (cur === "INR")
+    return neg + sym + abs.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return neg + sym + abs.toLocaleString("en-US", { maximumFractionDigits: 2 });
+};
+
+export function convertCurrency(amount, fromCur, toCur, rates) {
+  if (fromCur === toCur) return amount;
+  const direct = rates[`${fromCur}:${toCur}`];
+  if (direct) return amount / direct;
+  const reverse = rates[`${toCur}:${fromCur}`];
+  if (reverse) return amount * reverse;
+  return null;
+}
+
+export function tripWalletBalances(walletId, txList) {
+  const bals = {};
+  for (const x of txList) {
+    if (x.type === "fund-in" && x.wallet === walletId)
+      bals[x.currency] = (bals[x.currency] || 0) + x.amount;
+    if (x.type === "expense" && x.wallet === walletId)
+      bals[x.currency] = (bals[x.currency] || 0) - x.amount;
+    if (x.type === "exchange" && x.wallet === walletId) {
+      bals[x.fromCurrency] = (bals[x.fromCurrency] || 0) - x.fromAmount;
+      bals[x.toCurrency] = (bals[x.toCurrency] || 0) + x.toAmount;
+    }
+    if (x.type === "transfer") {
+      if (x.fromWallet === walletId) bals[x.currency] = (bals[x.currency] || 0) - x.amount;
+      if (x.toWallet === walletId) bals[x.currency] = (bals[x.currency] || 0) + x.amount;
+    }
+  }
+  return bals;
+}
+
+export function emptyTrip(name) {
+  return {
+    id: "t_" + uid(), name: name || "New Trip", status: "active",
+    startDate: todayISO(), endDate: "",
+    baseCurrency: "INR", currencies: ["INR"], baselineRates: {},
+    members: [],
+    wallets: [{ id: "w_pool_" + uid(), name: "Pool", type: "pool", paymentModes: ["Cash"] }],
+    groups: [], tagConfig: {}, tx: [], planned: [],
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
