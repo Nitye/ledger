@@ -86,13 +86,51 @@ export const fmtCurrency = (amount, cur) => {
   return neg + sym + abs.toLocaleString("en-US", { maximumFractionDigits: 2 });
 };
 
-export function convertCurrency(amount, fromCur, toCur, rates) {
-  if (fromCur === toCur) return amount;
-  const direct = rates[`${fromCur}:${toCur}`];
-  if (direct) return amount / direct;
-  const reverse = rates[`${toCur}:${fromCur}`];
-  if (reverse) return amount * reverse;
+// Rate storage: baselineRates is a flat map "FROM:TO" -> how many FROM per 1 TO.
+// Adjacent currency pairs (order in trip.currencies) are the PRIMARY rates the
+// user sets directly. Non-adjacent pairs are DERIVED by chaining through the
+// primaries — unless the user has explicitly set/overridden them, in which case
+// the stored value wins. This keeps the format 100% backward-compatible: old
+// trips just have a flat map with every pair stored, which still resolves.
+
+export function rateLink(a, b, rates) {
+  // direct a-per-b along one hop
+  if (rates[`${a}:${b}`] != null) return rates[`${a}:${b}`];
+  if (rates[`${b}:${a}`] != null) return 1 / rates[`${b}:${a}`];
   return null;
+}
+
+// Resolve FROM-per-TO, chaining through the ordered currency list if needed.
+export function resolveRate(fromCur, toCur, rates, currencies) {
+  if (fromCur === toCur) return 1;
+  // explicit (anchored) rate wins
+  const direct = rateLink(fromCur, toCur, rates);
+  if (direct != null) return direct;
+  // chain through adjacency order
+  if (!currencies || currencies.length === 0) return null;
+  const fi = currencies.indexOf(fromCur), ti = currencies.indexOf(toCur);
+  if (fi === -1 || ti === -1) return null;
+  const step = fi < ti ? 1 : -1;
+  let acc = 1;
+  for (let i = fi; i !== ti; i += step) {
+    const a = currencies[i], b = currencies[i + step];
+    const r = rateLink(a, b, rates); // a-per-b
+    if (r == null) return null;
+    acc *= r;
+  }
+  return acc; // from-per-to
+}
+
+// True if the pair is stored explicitly (anchored) rather than derived.
+export function isRateAnchored(fromCur, toCur, rates) {
+  return rates[`${fromCur}:${toCur}`] != null || rates[`${toCur}:${fromCur}`] != null;
+}
+
+export function convertCurrency(amount, fromCur, toCur, rates, currencies) {
+  if (fromCur === toCur) return amount;
+  const rate = resolveRate(fromCur, toCur, rates, currencies); // from per to
+  if (rate == null) return null;
+  return amount / rate; // amount(from) / (from per to) = to
 }
 
 export function tripWalletBalances(walletId, txList) {
@@ -112,6 +150,15 @@ export function tripWalletBalances(walletId, txList) {
     }
   }
   return bals;
+}
+
+// Deterministic color for a wallet, by its index in the trip's wallet list.
+export const WALLET_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#06b6d4", "#8b5cf6", "#14b8a6"];
+export function walletColor(trip, walletId) {
+  const i = trip.wallets.findIndex((w) => w.id === walletId);
+  if (i === -1) return "#8a8d96";
+  if (trip.wallets[i].type === "pool") return WALLET_COLORS[0];
+  return WALLET_COLORS[i % WALLET_COLORS.length];
 }
 
 export function emptyTrip(name) {

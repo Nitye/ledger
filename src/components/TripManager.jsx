@@ -21,7 +21,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Modal, Seg, Stat, Toggle, COLORS, pill, inp, sel, lbl, primaryBtn, secondaryBtn, miniBtn, styles } from "../lib/ui.jsx";
-import { uid, todayISO, niceDate, fmtCurrency, convertCurrency, tripWalletBalances, emptyTrip, visibleTags, isGhost } from "../lib/model";
+import { uid, todayISO, niceDate, fmtCurrency, convertCurrency, resolveRate, isRateAnchored, walletColor, tripWalletBalances, emptyTrip, visibleTags, isGhost } from "../lib/model";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -35,43 +35,51 @@ function SyncDot({ t, state }) {
 
 // ── TRIP TX ROW (extracted to avoid hooks-in-map) ───────────────────────────
 
-function TripTxRow({ x, t, trip, txIcon, txColor, groupName, onEdit, onDelete }) {
+function TripTxRow({ x, t, trip, txIcon, txColor, groupName, showWallet, onEdit, onDelete }) {
   const [open, setOpen] = useState(false);
+  const ownerId = x.wallet || x.fromWallet;
+  const barColor = walletColor(trip, ownerId);
+  const ownerName = trip.wallets.find((w) => w.id === ownerId)?.name;
+  const toName = x.type === "transfer" ? trip.wallets.find((w) => w.id === x.toWallet)?.name : null;
   return (
-    <div onClick={() => setOpen(!open)} style={{ padding: "12px 14px", borderRadius: 12, background: t.card, border: `1px solid ${t.line}`, marginBottom: 6, cursor: "pointer" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ width: 32, height: 32, borderRadius: 10, background: txColor(x) + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: txColor(x), flexShrink: 0 }}>
-          {txIcon(x)}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.note || x.type}</div>
-          <div style={{ fontSize: 12, color: t.dim, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
-            <span>{niceDate(x.date)}</span>
-            {x.city && <span style={pill(t)}>{x.city}</span>}
-            {x.group && <span style={{ ...pill(t), background: (trip.groups.find((g) => g.id === x.group)?.color || t.dim) + "22", color: trip.groups.find((g) => g.id === x.group)?.color || t.dim }}>{groupName(x.group)}</span>}
-            {x.paymentMode && <span style={pill(t)}>{x.paymentMode}</span>}
-            {visibleTags(x.tags || [], trip.tagConfig || {}).map((tag) => <span key={tag} style={pill(t)}>{tag}</span>)}
+    <div onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "stretch", marginBottom: 6, borderRadius: 12, overflow: "hidden", background: t.card, border: `1px solid ${t.line}`, cursor: "pointer" }}>
+      <div style={{ width: 4, background: barColor, flexShrink: 0 }} />
+      <div style={{ flex: 1, padding: "12px 14px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: txColor(x) + "22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: txColor(x), flexShrink: 0 }}>
+            {txIcon(x)}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.note || x.type}</div>
+            <div style={{ fontSize: 12, color: t.dim, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2, alignItems: "center" }}>
+              <span>{niceDate(x.date)}</span>
+              {showWallet && ownerName && <span style={{ color: barColor }}>{ownerName}{toName ? ` → ${toName}` : ""}</span>}
+              {x.city && <span style={pill(t)}>{x.city}</span>}
+              {x.group && <span style={{ ...pill(t), background: (trip.groups.find((g) => g.id === x.group)?.color || t.dim) + "22", color: trip.groups.find((g) => g.id === x.group)?.color || t.dim }}>{groupName(x.group)}</span>}
+              {x.paymentMode && <span style={pill(t)}>{x.paymentMode}</span>}
+              {visibleTags(x.tags || [], trip.tagConfig || {}).map((tag) => <span key={tag} style={pill(t)}>{tag}</span>)}
+            </div>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            {x.type === "exchange" ? (
+              <div>
+                <div style={{ fontSize: 13, color: t.red }}>−{fmtCurrency(x.fromAmount, x.fromCurrency)}</div>
+                <div style={{ fontSize: 13, color: t.green }}>+{fmtCurrency(x.toAmount, x.toCurrency)}</div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 15, fontWeight: 700, color: x.type === "expense" ? t.red : x.type === "fund-in" ? t.green : t.text }}>
+                {x.type === "expense" ? "−" : x.type === "fund-in" ? "+" : ""}{fmtCurrency(x.amount, x.currency)}
+              </div>
+            )}
           </div>
         </div>
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          {x.type === "exchange" ? (
-            <div>
-              <div style={{ fontSize: 13, color: t.red }}>−{fmtCurrency(x.fromAmount, x.fromCurrency)}</div>
-              <div style={{ fontSize: 13, color: t.green }}>+{fmtCurrency(x.toAmount, x.toCurrency)}</div>
-            </div>
-          ) : (
-            <div style={{ fontSize: 15, fontWeight: 700, color: x.type === "expense" ? t.red : x.type === "fund-in" ? t.green : t.text }}>
-              {x.type === "expense" ? "−" : x.type === "fund-in" ? "+" : ""}{fmtCurrency(x.amount, x.currency)}
-            </div>
-          )}
-        </div>
+        {open && (
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+            <button style={miniBtn(t)} onClick={onEdit}>Edit</button>
+            <button style={{ ...miniBtn(t), color: t.red, borderColor: t.red + "55" }} onClick={onDelete}>Delete</button>
+          </div>
+        )}
       </div>
-      {open && (
-        <div style={{ display: "flex", gap: 8, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
-          <button style={miniBtn(t)} onClick={onEdit}>Edit</button>
-          <button style={{ ...miniBtn(t), color: t.red, borderColor: t.red + "55" }} onClick={onDelete}>Delete</button>
-        </div>
-      )}
     </div>
   );
 }
@@ -79,19 +87,21 @@ function TripTxRow({ x, t, trip, txIcon, txColor, groupName, onEdit, onDelete })
 // ── TRIP HOME ───────────────────────────────────────────────────────────────
 
 function TripHome({ t, trip, setTrip }) {
-  const [selWallet, setSelWallet] = useState(trip.wallets[0]?.id);
+  const [selWallet, setSelWallet] = useState("all"); // "all" or a wallet id
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
 
+  const isAll = selWallet === "all";
   const wallet = trip.wallets.find((w) => w.id === selWallet);
-  const bals = useMemo(() => tripWalletBalances(selWallet, trip.tx), [selWallet, trip.tx]);
+  const bals = useMemo(() => isAll ? null : tripWalletBalances(selWallet, trip.tx), [selWallet, trip.tx, isAll]);
 
-  const walletTx = useMemo(() => trip.tx.filter((x) =>
-    x.wallet === selWallet || x.fromWallet === selWallet || x.toWallet === selWallet
-  ).sort((a, b) => b.date.localeCompare(a.date)), [trip.tx, selWallet]);
+  const feed = useMemo(() => {
+    let rows = trip.tx;
+    if (!isAll) rows = rows.filter((x) => x.wallet === selWallet || x.fromWallet === selWallet || x.toWallet === selWallet);
+    return [...rows].sort((a, b) => b.date.localeCompare(a.date));
+  }, [trip.tx, selWallet, isAll]);
 
   const groupName = (gId) => trip.groups.find((g) => g.id === gId)?.name;
-
   const txIcon = (x) => ({ expense: "↓", "fund-in": "↑", exchange: "⇄", transfer: "→" }[x.type] || "·");
   const txColor = (x) => ({ expense: t.red, "fund-in": t.green, exchange: t.amber, transfer: t.accent }[x.type] || t.dim);
 
@@ -107,16 +117,23 @@ function TripHome({ t, trip, setTrip }) {
 
   return (
     <div>
-      {/* wallet selector */}
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 8 }}>
-        {trip.wallets.map((w, i) => {
+      {/* wallet selector — All wallets first, then each wallet */}
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 12 }}>
+        <button onClick={() => setSelWallet("all")} style={{
+          flexShrink: 0, padding: "10px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left",
+          border: `1px solid ${isAll ? t.accent : t.line}`, background: isAll ? t.accent + "22" : t.card, color: t.text,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>All wallets</div>
+          <div style={{ fontSize: 11, color: t.dim, marginTop: 2 }}>{trip.tx.length} txns</div>
+        </button>
+        {trip.wallets.map((w) => {
           const active = w.id === selWallet;
+          const color = walletColor(trip, w.id);
           const wBals = tripWalletBalances(w.id, trip.tx);
           const entries = Object.entries(wBals).filter(([, v]) => Math.abs(v) > 0.001);
-          const color = w.type === "pool" ? t.accent : COLORS[i % COLORS.length];
           return (
             <button key={w.id} onClick={() => setSelWallet(w.id)} style={{
-              flexShrink: 0, padding: "10px 14px", borderRadius: 14, cursor: "pointer", minWidth: 120, textAlign: "left",
+              flexShrink: 0, padding: "10px 14px", borderRadius: 14, cursor: "pointer", minWidth: 110, textAlign: "left",
               border: `1px solid ${active ? color : t.line}`, background: active ? color + "22" : t.card, color: t.text,
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -135,35 +152,42 @@ function TripHome({ t, trip, setTrip }) {
         })}
       </div>
 
-      {/* balance card */}
-      <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12 }}>
-        <div style={{ fontSize: 12, color: t.dim, letterSpacing: 0.5, marginBottom: 10 }}>{wallet?.name} — BALANCES</div>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          {Object.entries(bals).filter(([, v]) => Math.abs(v) > 0.001).map(([cur, amt]) => (
-            <div key={cur} style={{ minWidth: 80 }}>
-              <div style={{ fontSize: 11, color: t.dim }}>{cur}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: amt >= 0 ? t.green : t.red }}>{fmtCurrency(amt, cur)}</div>
-            </div>
-          ))}
-          {Object.keys(bals).filter((k) => Math.abs(bals[k]) > 0.001).length === 0 && (
-            <div style={{ color: t.dim, fontSize: 14 }}>No balances yet</div>
-          )}
+      {/* balance card — only for a specific wallet */}
+      {!isAll && (
+        <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: t.dim, letterSpacing: 0.5, marginBottom: 10 }}>{wallet?.name} — BALANCES</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {Object.entries(bals).filter(([, v]) => Math.abs(v) > 0.001).map(([cur, amt]) => (
+              <div key={cur} style={{ minWidth: 80 }}>
+                <div style={{ fontSize: 11, color: t.dim }}>{cur}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: amt >= 0 ? t.green : t.red }}>{fmtCurrency(amt, cur)}</div>
+              </div>
+            ))}
+            {Object.keys(bals).filter((k) => Math.abs(bals[k]) > 0.001).length === 0 && (
+              <div style={{ color: t.dim, fontSize: 14 }}>No balances yet</div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* transaction list */}
-      <div style={{ fontSize: 12, color: t.dim, letterSpacing: 0.5, marginBottom: 8 }}>TRANSACTIONS · {walletTx.length}</div>
-      {walletTx.map((x) => (
-        <TripTxRow key={x.id} x={x} t={t} trip={trip} txIcon={txIcon} txColor={txColor} groupName={groupName}
+      {/* unified transaction feed */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: t.dim, letterSpacing: 0.5 }}>
+          {isAll ? "ALL TRANSACTIONS" : (wallet?.name || "").toUpperCase()} · {feed.length}
+        </div>
+        {!isAll && <button onClick={() => setSelWallet("all")} style={{ ...pill(t), cursor: "pointer", color: t.accent }}>show all</button>}
+      </div>
+      {feed.map((x) => (
+        <TripTxRow key={x.id} x={x} t={t} trip={trip} txIcon={txIcon} txColor={txColor} groupName={groupName} showWallet={isAll}
           onEdit={() => { setEditing(x); setShowForm(true); }} onDelete={() => deleteTx(x.id)} />
       ))}
-      {walletTx.length === 0 && <div style={{ textAlign: "center", color: t.dim, padding: 20 }}>No transactions in this wallet yet</div>}
+      {feed.length === 0 && <div style={{ textAlign: "center", color: t.dim, padding: 20 }}>{isAll ? "No transactions yet" : "No transactions in this wallet yet"}</div>}
 
       {/* FAB */}
       <button style={{ ...styles.fab, background: t.accent }} onClick={() => { setEditing(null); setShowForm(true); }} aria-label="Add">+</button>
 
       {showForm && (
-        <TripTxForm t={t} trip={trip} initial={editing} defaultWallet={selWallet}
+        <TripTxForm t={t} trip={trip} initial={editing} defaultWallet={isAll ? trip.wallets[0]?.id : selWallet}
           onSave={saveTx} onClose={() => { setShowForm(false); setEditing(null); }} />
       )}
     </div>
@@ -191,6 +215,11 @@ function TripTxForm({ t, trip, initial, defaultWallet, onSave, onClose }) {
   const [fromCurrency, setFromCurrency] = useState(initial?.fromCurrency || trip.currencies[0]);
   const [toCurrency, setToCurrency] = useState(initial?.toCurrency || (trip.currencies.length > 1 ? trip.currencies[1] : trip.currencies[0]));
   const [rate, setRate] = useState(initial?.type === "exchange" ? String(initial.rate || "") : "");
+  // exchange entry mode: "rate" (enter the rate) or "amount" (enter exact received amount)
+  const [exchMode, setExchMode] = useState("rate");
+  const [gotAmount, setGotAmount] = useState(
+    initial?.type === "exchange" && initial.toAmount ? String(initial.toAmount) : ""
+  );
 
   const selWallet = trip.wallets.find((w) => w.id === wallet);
   const allTripTags = useMemo(() => [...new Set(trip.tx.flatMap((x) => x.tags || []))].sort(), [trip.tx]);
@@ -206,19 +235,28 @@ function TripTxForm({ t, trip, initial, defaultWallet, onSave, onClose }) {
   };
   const tagSuggestions = allTripTags.filter((tg) => !tags.includes(tg) && tg.includes(tagInput.toLowerCase())).slice(0, 8);
 
-  // compute exchange result
+  // compute exchange result. Default rate is resolved through the currency chain
+  // so even a derived (non-adjacent) pair pre-fills correctly.
   const exchFrom = parseFloat(fromAmount) || 0;
-  const exchRate = parseFloat(rate) || 0;
-  const baselineRate = trip.baselineRates[`${fromCurrency}:${toCurrency}`] || trip.baselineRates[`${toCurrency}:${fromCurrency}`] || 0;
+  const baselineRate = resolveRate(fromCurrency, toCurrency, trip.baselineRates, trip.currencies) || 0;
+  // effective rate + received amount depend on the entry mode
+  let effRate, exchTo;
+  if (exchMode === "amount") {
+    exchTo = parseFloat(gotAmount) || 0;
+    effRate = exchTo ? exchFrom / exchTo : 0; // back-calculated, stored on this txn only
+  } else {
+    effRate = parseFloat(rate) || baselineRate || 0;
+    exchTo = effRate ? exchFrom / effRate : 0;
+  }
 
   const submit = () => {
     if (type === "exchange") {
-      if (!exchFrom || !exchRate) return;
+      if (!exchFrom || !effRate || !exchTo) return;
       onSave({
         id: initial?.id || uid(), type: "exchange",
         fromAmount: exchFrom, fromCurrency,
-        toAmount: exchFrom / exchRate, toCurrency,
-        wallet, rate: exchRate, note, date,
+        toAmount: exchTo, toCurrency,
+        wallet, rate: effRate, note, date,
         tags, group: null, city: city || null,
       });
     } else if (type === "transfer") {
@@ -273,29 +311,51 @@ function TripTxForm({ t, trip, initial, defaultWallet, onSave, onClose }) {
                 <input value={fromAmount} onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setFromAmount(v); }}
                   placeholder="0" style={{ ...inp(t), fontSize: 20, fontWeight: 700, textAlign: "center" }} type="text" inputMode="decimal" />
               </div>
-              <div style={{ width: 90 }}>
+              <div style={{ width: 84 }}>
                 <label style={lbl(t)}>From</label>
                 <select value={fromCurrency} onChange={(e) => setFromCurrency(e.target.value)} style={inp(t)}>
                   {trip.currencies.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </div>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                <label style={lbl(t)}>Rate (1 {toCurrency} = ? {fromCurrency})</label>
-                <input value={rate} onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setRate(v); }}
-                  placeholder={baselineRate ? String(baselineRate) : "0"} style={inp(t)} type="text" inputMode="decimal" />
-              </div>
-              <div style={{ width: 90 }}>
+              <div style={{ width: 84 }}>
                 <label style={lbl(t)}>To</label>
                 <select value={toCurrency} onChange={(e) => setToCurrency(e.target.value)} style={inp(t)}>
                   {trip.currencies.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </div>
             </div>
-            {exchFrom > 0 && exchRate > 0 && (
+
+            <div>
+              <label style={lbl(t)}>Enter by</label>
+              <Seg t={t} options={["rate", "amount"]} value={exchMode} onChange={setExchMode} full />
+            </div>
+
+            {exchMode === "rate" ? (
+              <div>
+                <label style={lbl(t)}>Rate (1 {toCurrency} = ? {fromCurrency})</label>
+                <input value={rate} onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setRate(v); }}
+                  placeholder={baselineRate ? `${baselineRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} (default)` : "0"}
+                  style={inp(t)} type="text" inputMode="decimal" />
+                {baselineRate > 0 && !rate && (
+                  <div style={{ fontSize: 12, color: t.dim, marginTop: 5 }}>Leaving this blank uses the default rate of {baselineRate.toLocaleString(undefined, { maximumFractionDigits: 4 })}.</div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label style={lbl(t)}>Exact amount received in {toCurrency}</label>
+                <input value={gotAmount} onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setGotAmount(v); }}
+                  placeholder="0" style={inp(t)} type="text" inputMode="decimal" />
+                {exchFrom > 0 && exchTo > 0 && (
+                  <div style={{ fontSize: 12, color: t.amber, marginTop: 5 }}>
+                    Implied rate: 1 {toCurrency} = {effRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {fromCurrency} (saved on this transaction; trip default rate is untouched)
+                  </div>
+                )}
+              </div>
+            )}
+
+            {exchFrom > 0 && exchTo > 0 && (
               <div style={{ padding: 10, borderRadius: 10, background: t.green + "15", fontSize: 14, textAlign: "center" }}>
-                You get <strong>{fmtCurrency(exchFrom / exchRate, toCurrency)}</strong>
+                {fmtCurrency(exchFrom, fromCurrency)} → <strong>{fmtCurrency(exchTo, toCurrency)}</strong>
               </div>
             )}
           </>
@@ -304,7 +364,7 @@ function TripTxForm({ t, trip, initial, defaultWallet, onSave, onClose }) {
         <div>
           <label style={lbl(t)}>{type === "transfer" ? "From wallet" : "Wallet"}</label>
           <select value={wallet} onChange={(e) => setWallet(e.target.value)} style={{ ...inp(t) }}>
-            {trip.wallets.map((w) => <option key={w.id} value={w.id}>{w.name}{w.type === "pool" ? " (Pool)" : ""}</option>)}
+            {trip.wallets.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         </div>
 
@@ -312,7 +372,7 @@ function TripTxForm({ t, trip, initial, defaultWallet, onSave, onClose }) {
           <div>
             <label style={lbl(t)}>To wallet</label>
             <select value={toWallet} onChange={(e) => setToWallet(e.target.value)} style={{ ...inp(t) }}>
-              {trip.wallets.filter((w) => w.id !== wallet).map((w) => <option key={w.id} value={w.id}>{w.name}{w.type === "pool" ? " (Pool)" : ""}</option>)}
+              {trip.wallets.filter((w) => w.id !== wallet).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </div>
         )}
@@ -462,7 +522,7 @@ function Contemplate({ t, trip, setTrip }) {
             <div style={{ fontSize: 12, color: t.dim, letterSpacing: 0.5, marginBottom: 10 }}>CONVERSIONS AT BASELINE RATES</div>
             {trip.currencies.filter((c) => c !== convFrom).map((toCur) => {
               const num = parseFloat(convAmount) || 0;
-              const result = convertCurrency(num, convFrom, toCur, trip.baselineRates);
+              const result = convertCurrency(num, convFrom, toCur, trip.baselineRates, trip.currencies);
               const rateKey = `${convFrom}:${toCur}`;
               const revKey = `${toCur}:${convFrom}`;
               const rateDisplay = trip.baselineRates[rateKey]
@@ -492,7 +552,7 @@ function Contemplate({ t, trip, setTrip }) {
                 </div>
                 {trip.currencies.filter((c) => c !== convFrom).map((toCur) => {
                   const num = parseFloat(convAmount) || 0;
-                  const result = convertCurrency(num, convFrom, toCur, trip.baselineRates);
+                  const result = convertCurrency(num, convFrom, toCur, trip.baselineRates, trip.currencies);
                   if (result === null) return null;
                   return (
                     <div key={toCur} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 14 }}>
@@ -515,7 +575,7 @@ function Contemplate({ t, trip, setTrip }) {
 
           {trip.planned.filter((p) => !p.done).map((p) => {
             const total = p.amount * p.qty;
-            const inrEquiv = p.currency !== trip.baseCurrency ? convertCurrency(total, p.currency, trip.baseCurrency, trip.baselineRates) : null;
+            const inrEquiv = p.currency !== trip.baseCurrency ? convertCurrency(total, p.currency, trip.baseCurrency, trip.baselineRates, trip.currencies) : null;
             const isSel = selPlanned.has(p.id);
             return (
               <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 14px", borderRadius: 12, background: isSel ? t.accent + "18" : t.card, border: `1px solid ${isSel ? t.accent : t.line}`, marginBottom: 6, cursor: "pointer" }}>
@@ -624,7 +684,7 @@ function TripAnalyze({ t, trip }) {
   let totalBase = 0;
   for (const x of filtered) {
     if (x.currency === trip.baseCurrency) { totalBase += x.amount; continue; }
-    const conv = convertCurrency(x.amount, x.currency, trip.baseCurrency, trip.baselineRates);
+    const conv = convertCurrency(x.amount, x.currency, trip.baseCurrency, trip.baselineRates, trip.currencies);
     if (conv !== null) totalBase += conv;
   }
 
@@ -756,8 +816,7 @@ function TripSetup({ t, trip, setTrip }) {
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupColor, setNewGroupColor] = useState(COLORS[0]);
   // rate edit
-  const [editingRate, setEditingRate] = useState(null); // "FROM:TO"
-  const [rateValue, setRateValue] = useState("");
+  // rate edit is now inline in the primary/derived sections (no modal state needed)
 
   const saveInfo = () => {
     setTrip((prev) => ({ ...prev, name: editName.trim() || prev.name, startDate: editStart, endDate: editEnd }));
@@ -788,7 +847,7 @@ function TripSetup({ t, trip, setTrip }) {
   const addWallet = () => {
     const n = newWalletName.trim();
     if (!n) return;
-    setTrip((prev) => ({ ...prev, wallets: [...prev.wallets, { id: "w_" + uid(), name: n, type: "personal", paymentModes: [] }] }));
+    setTrip((prev) => ({ ...prev, wallets: [...prev.wallets, { id: "w_" + uid(), name: n, type: "personal", paymentModes: ["Cash"] }] }));
     setNewWalletName("");
   };
   const removeWallet = (wId) => {
@@ -826,20 +885,33 @@ function TripSetup({ t, trip, setTrip }) {
     }));
   };
 
-  const saveRate = (pair) => {
-    const v = parseFloat(rateValue);
-    if (!v) return;
-    setTrip((prev) => ({ ...prev, baselineRates: { ...prev.baselineRates, [pair]: v } }));
-    setEditingRate(null); setRateValue("");
+  const setAnchor = (from, to, val) => {
+    setTrip((prev) => {
+      const next = { ...prev.baselineRates };
+      const v = parseFloat(val);
+      if (val === "" || isNaN(v)) { delete next[`${from}:${to}`]; }
+      else next[`${from}:${to}`] = v;
+      return { ...prev, baselineRates: next };
+    });
   };
 
-  // generate all possible pairs from currencies
-  const pairs = [];
-  for (let i = 0; i < trip.currencies.length; i++) {
-    for (let j = i + 1; j < trip.currencies.length; j++) {
-      pairs.push(`${trip.currencies[i]}:${trip.currencies[j]}`);
-    }
-  }
+  const moveCurrency = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= trip.currencies.length) return;
+    setTrip((prev) => {
+      const next = [...prev.currencies];
+      [next[i], next[j]] = [next[j], next[i]];
+      return { ...prev, currencies: next };
+    });
+  };
+
+  // adjacency-based split: adjacent pairs are primary (user sets); non-adjacent are derived.
+  const adjacentPairs = [];
+  for (let i = 0; i < trip.currencies.length - 1; i++) adjacentPairs.push([trip.currencies[i], trip.currencies[i + 1]]);
+  const derivedPairs = [];
+  for (let i = 0; i < trip.currencies.length; i++)
+    for (let j = i + 2; j < trip.currencies.length; j++)
+      derivedPairs.push([trip.currencies[i], trip.currencies[j]]);
 
   const toggleArchive = () => {
     setTrip((prev) => ({ ...prev, status: prev.status === "active" ? "archived" : "active" }));
@@ -905,44 +977,78 @@ function TripSetup({ t, trip, setTrip }) {
         </div>
       </div>
 
-      {/* Baseline rates */}
-      <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12 }}>
-        <label style={lbl(t)}>BASELINE EXCHANGE RATES</label>
-        {pairs.length === 0 && <div style={{ color: t.dim, fontSize: 13 }}>Add at least 2 currencies to set rates</div>}
-        {pairs.map((pair) => {
-          const [from, to] = pair.split(":");
-          const current = trip.baselineRates[pair];
-          return (
-            <div key={pair} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${t.line}` }}>
-              {editingRate === pair ? (
-                <div style={{ display: "flex", gap: 8, flex: 1, alignItems: "center" }}>
-                  <span style={{ fontSize: 13, color: t.dim, whiteSpace: "nowrap" }}>1 {to} =</span>
-                  <input value={rateValue} onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setRateValue(v); }}
-                    placeholder="rate" style={{ ...inp(t), flex: 1 }} type="text" inputMode="decimal" autoFocus />
-                  <span style={{ fontSize: 13, color: t.dim }}>{from}</span>
-                  <button style={miniBtn(t)} onClick={() => saveRate(pair)}>✓</button>
-                  <button style={{ ...miniBtn(t), color: t.red }} onClick={() => setEditingRate(null)}>×</button>
-                </div>
-              ) : (
-                <>
-                  <span style={{ fontSize: 14 }}>1 {to} =</span>
-                  <button onClick={() => { setEditingRate(pair); setRateValue(current ? String(current) : ""); }}
-                    style={{ ...miniBtn(t), fontWeight: current ? 700 : 400, color: current ? t.text : t.dim }}>
-                    {current ? `${current.toLocaleString()} ${from}` : "Set rate"}
-                  </button>
-                </>
-              )}
+      {/* Currency order (reorderable) */}
+      {trip.currencies.length > 1 && (
+        <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12 }}>
+          <label style={lbl(t)}>CURRENCY ORDER <span style={{ color: t.dim }}>(adjacent pairs populate the rest)</span></label>
+          {trip.currencies.map((c, i) => (
+            <div key={c} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: i < trip.currencies.length - 1 ? `1px solid ${t.line}` : "none" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 15, fontWeight: 600 }}>{c}</span>
+                {c === trip.baseCurrency && <span style={{ ...pill(t), background: t.accent + "22", color: t.accent, fontSize: 9 }}>BASE</span>}
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => moveCurrency(i, -1)} disabled={i === 0} style={{ ...miniBtn(t), padding: "4px 10px", opacity: i === 0 ? 0.3 : 1 }}>↑</button>
+                <button onClick={() => moveCurrency(i, 1)} disabled={i === trip.currencies.length - 1} style={{ ...miniBtn(t), padding: "4px 10px", opacity: i === trip.currencies.length - 1 ? 0.3 : 1 }}>↓</button>
+              </div>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
+
+      {/* Primary (adjacent) rates */}
+      {adjacentPairs.length > 0 && (
+        <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12 }}>
+          <label style={lbl(t)}>PRIMARY RATES <span style={{ color: t.dim }}>(you set these)</span></label>
+          {adjacentPairs.map(([from, to]) => (
+            <div key={from + to} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${t.line}` }}>
+              <span style={{ fontSize: 14, flex: 1 }}>1 {to} =</span>
+              <input value={trip.baselineRates[`${from}:${to}`] ?? ""} onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setAnchor(from, to, v); }}
+                placeholder="rate" style={{ ...inp(t), width: 130, flex: "none", textAlign: "right" }} type="text" inputMode="decimal" />
+              <span style={{ fontSize: 14, color: t.dim, width: 40 }}>{from}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Derived rates (auto, overridable) */}
+      {derivedPairs.length > 0 && (
+        <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12 }}>
+          <label style={lbl(t)}>DERIVED RATES <span style={{ color: t.dim }}>(auto — type to override)</span></label>
+          {derivedPairs.map(([from, to]) => {
+            const overridden = isRateAnchored(from, to, trip.baselineRates);
+            const derived = resolveRate(from, to, trip.baselineRates, trip.currencies);
+            const displayVal = trip.baselineRates[`${from}:${to}`] != null
+              ? trip.baselineRates[`${from}:${to}`]
+              : (overridden ? (1 / trip.baselineRates[`${to}:${from}`]) : (derived != null ? Number(derived.toFixed(6)) : ""));
+            return (
+              <div key={from + to} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: `1px solid ${t.line}` }}>
+                <span style={{ fontSize: 14, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                  1 {to} =
+                  {!overridden && derived != null && <span style={{ ...pill(t), fontSize: 9, background: t.amber + "22", color: t.amber }}>CALC</span>}
+                </span>
+                <input value={displayVal === "" ? "" : displayVal} onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setAnchor(from, to, v); }}
+                  placeholder="—" style={{ ...inp(t), width: 130, flex: "none", textAlign: "right", color: overridden ? t.text : t.dim, fontStyle: overridden ? "normal" : "italic" }} type="text" inputMode="decimal" />
+                <span style={{ fontSize: 14, color: t.dim, width: 40 }}>{from}</span>
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 11, color: t.dim, marginTop: 8 }}>Derived from chaining the primary rates. Type a value to lock one; clear it to return to auto.</div>
+        </div>
+      )}
+
+      {trip.currencies.length < 2 && (
+        <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12, color: t.dim, fontSize: 13 }}>
+          Add at least 2 currencies to set exchange rates.
+        </div>
+      )}
 
       {/* Wallets */}
       <div style={{ padding: 16, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, marginBottom: 12 }}>
         <label style={lbl(t)}>WALLETS · {trip.wallets.length}</label>
         {trip.wallets.map((w, i) => {
           const hasTx = trip.tx.some((x) => x.wallet === w.id || x.fromWallet === w.id || x.toWallet === w.id);
-          const color = w.type === "pool" ? t.accent : COLORS[i % COLORS.length];
+          const color = walletColor(trip, w.id);
           return (
             <div key={w.id} style={{ padding: "10px 0", borderBottom: `1px solid ${t.line}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1026,7 +1132,7 @@ export default function TripManager({ t, dark, setDark, syncState, trip, allTrip
       const bals = tripWalletBalances(w.id, trip.tx);
       for (const [cur, amt] of Object.entries(bals)) {
         if (cur === trip.baseCurrency) { total += amt; continue; }
-        const conv = convertCurrency(amt, cur, trip.baseCurrency, trip.baselineRates);
+        const conv = convertCurrency(amt, cur, trip.baseCurrency, trip.baselineRates, trip.currencies);
         if (conv !== null) total += conv;
       }
     }

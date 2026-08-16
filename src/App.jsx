@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { theme, styles, primaryBtn, secondaryBtn } from "./lib/ui.jsx";
-import { emptyState, uid, todayISO, migrateLedger } from "./lib/model";
+import { emptyState, uid, todayISO, migrateLedger, emptyTrip } from "./lib/model";
 import { GOOGLE_CLIENT_ID } from "./lib/config";
 import * as drive from "./lib/drive";
 import PinGate from "./components/PinGate.jsx";
@@ -189,9 +189,19 @@ export default function App() {
       <style>{`* { box-sizing: border-box; } html, body, #root { margin:0; padding:0; min-height:100%; background:${t.bg}; } body { overflow-x:hidden; } ::-webkit-scrollbar{width:7px;height:7px} ::-webkit-scrollbar-thumb{background:${t.line};border-radius:4px} input,select,button{font-family:inherit}`}</style>
 
       <div style={{ ...styles.header, borderBottom: `1px solid ${t.line}` }}>
-        <div>
-          <div style={{ fontSize: 11, letterSpacing: 2, color: t.dim }}>{titles[view]}</div>
-          {view === "home" && <div style={{ fontSize: 26, fontWeight: 700, marginTop: 2 }}>{netWorth < 0 ? "−" : ""}₹{Math.abs(netWorth).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button onClick={() => {
+            const active = data.trips.filter((tr) => tr.status === "active");
+            if (active.length > 0) setActiveTripId(active[active.length - 1].id);
+            else if (data.trips.length > 0) setActiveTripId(data.trips[data.trips.length - 1].id);
+            else { const tr = emptyTrip(); addTrip(tr); setActiveTripId(tr.id); }
+          }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${t.accent}55`, background: t.accent + "18", color: t.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", alignSelf: "flex-start" }}>
+            ✈ Trips
+          </button>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: 2, color: t.dim }}>{titles[view]}</div>
+            {view === "home" && <div style={{ fontSize: 26, fontWeight: 700, marginTop: 2 }}>{netWorth < 0 ? "−" : ""}₹{Math.abs(netWorth).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</div>}
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <SyncDot t={t} state={syncState} />
@@ -223,7 +233,7 @@ export default function App() {
 }
 
 function Centered({ t, children }) {
-  return <div style={{ minHeight: "100vh", background: t.bg, color: t.text, fontFamily: t.font, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24 }}>{children}</div>;
+  return <div style={{ position: "fixed", inset: 0, minHeight: "100vh", background: t.bg, color: t.text, fontFamily: t.font, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24 }}>{children}</div>;
 }
 
 function SyncDot({ t, state }) {
