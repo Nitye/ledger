@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { theme, styles, primaryBtn, secondaryBtn } from "./lib/ui.jsx";
-import { emptyState, uid, todayISO, migrateLedger, emptyTrip } from "./lib/model";
+import { emptyState, uid, todayISO, migrateLedger, emptyTrip, balanceOf } from "./lib/model";
 import { GOOGLE_CLIENT_ID } from "./lib/config";
 import * as drive from "./lib/drive";
 import PinGate from "./components/PinGate.jsx";
 import TxForm from "./components/TxForm.jsx";
-import { Home, Analyze, Owed, Settings, InvoiceViewer } from "./components/Views.jsx";
+import { Home, Analyze, Owed, Settings, InvoiceViewer, SidePanel } from "./components/Views.jsx";
 import TripManager from "./components/TripManager.jsx";
 
 const clientIdMissing = !GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.startsWith("PASTE_");
@@ -33,6 +33,7 @@ export default function App() {
   const [showForm, setShowForm] = useState(false);
   const [formGroup, setFormGroup] = useState(null);
   const [viewingInvoice, setViewingInvoice] = useState(null);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // shared post-auth load (used by both explicit and silent sign-in)
   const afterAuth = useCallback(async () => {
@@ -113,6 +114,7 @@ export default function App() {
   const setAccounts = (updater) => setData((d) => ({ ...d, accounts: typeof updater === "function" ? updater(d.accounts) : updater }));
   const setGroups = (updater) => setData((d) => ({ ...d, groups: typeof updater === "function" ? updater(d.groups) : updater }));
   const setTagConfig = (updater) => setData((d) => ({ ...d, tagConfig: typeof updater === "function" ? updater(d.tagConfig) : updater }));
+  const setBudgets = (updater) => setData((d) => ({ ...d, budgets: typeof updater === "function" ? updater(d.budgets || []) : updater }));
 
   // v3: trip updater — replaces a single trip in the trips array
   const setTrip = useCallback((tripId, updater) => {
@@ -127,6 +129,8 @@ export default function App() {
   const deleteTx = (id) => setTx((prev) => prev.filter((p) => p.id !== id));
   const addRepayment = (id, amount) => setTx((prev) => prev.map((p) => p.id === id ? { ...p, repayments: [...(p.repayments || []), { id: uid(), amount, date: todayISO() }] } : p));
   const removeRepayment = (txId, rId) => setTx((prev) => prev.map((p) => p.id === txId ? { ...p, repayments: p.repayments.filter((r) => r.id !== rId) } : p));
+  // v3: forgive/reopen the owed remainder — pure flag flip, fully reversible
+  const setWriteOff = (id, val) => setTx((prev) => prev.map((p) => p.id === id ? { ...p, writeOff: val } : p));
 
   const signOut = () => { drive.signOut(); setSignedIn(false); setData(null); };
   const openAdd = (group = null) => { setEditing(null); setFormGroup(group); setShowForm(true); };
@@ -174,13 +178,10 @@ export default function App() {
     );
   }
 
-  const netWorth = data.accounts.reduce((s, a) => s + (function bal() {
-    let b = 0; for (const x of data.tx) {
-      if (x.type === "income" && x.account === a.id) b += x.amount;
-      if (x.type === "expense" && x.account === a.id) { b -= x.amount; b += (x.repayments || []).reduce((q, r) => q + r.amount, 0); }
-      if (x.type === "transfer") { if (x.account === a.id) b -= x.amount; if (x.toAccount === a.id) b += x.amount; }
-    } return b;
-  })(), 0);
+  // net worth sums per-account balances; balanceOf skips suppressed expenses
+  const netWorth = data.accounts.reduce((s, a) => s + balanceOf(data.tx, a.id, data.tagConfig), 0);
+  const curBal = balanceOf(data.tx, currentAccount, data.tagConfig);
+  const inr = (n) => (n < 0 ? "−" : "") + "₹" + Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
   const titles = { home: "NET WORTH", analyze: "ANALYZE", owed: "OWED TO YOU", settings: "SETTINGS" };
 
@@ -188,41 +189,57 @@ export default function App() {
     <div style={{ ...styles.app, background: t.bg, color: t.text, fontFamily: t.font }}>
       <style>{`* { box-sizing: border-box; } html, body, #root { margin:0; padding:0; min-height:100%; background:${t.bg}; } body { overflow-x:hidden; } ::-webkit-scrollbar{width:7px;height:7px} ::-webkit-scrollbar-thumb{background:${t.line};border-radius:4px} input,select,button{font-family:inherit}`}</style>
 
-      <div style={{ ...styles.header, borderBottom: `1px solid ${t.line}` }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <button onClick={() => {
-            const active = data.trips.filter((tr) => tr.status === "active");
-            if (active.length > 0) setActiveTripId(active[active.length - 1].id);
-            else if (data.trips.length > 0) setActiveTripId(data.trips[data.trips.length - 1].id);
-            else { const tr = emptyTrip(); addTrip(tr); setActiveTripId(tr.id); }
-          }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 10, border: `1px solid ${t.accent}55`, background: t.accent + "18", color: t.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", alignSelf: "flex-start" }}>
-            ✈ Trips
+      <div style={{ ...styles.header, alignItems: "center", borderBottom: `1px solid ${t.line}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+          <button onClick={() => setPanelOpen(true)} aria-label="Open menu" style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 46, height: 46, borderRadius: 12, border: `1px solid ${t.accent}55`, background: t.accent + "18", color: t.accent, fontSize: 20, cursor: "pointer" }}>
+            ☰
           </button>
-          <div>
+          {view === "home" ? (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
+              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+                <span style={{ fontSize: 11, letterSpacing: 2, color: t.dim }}>NET WORTH</span>
+                <span style={{ fontSize: 26, fontWeight: 700, marginTop: 3 }}>{inr(netWorth)}</span>
+              </div>
+              <span style={{ color: t.dim, fontSize: 34, fontWeight: 200, lineHeight: 1, alignSelf: "flex-end" }}>|</span>
+              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, minWidth: 0 }}>
+                <span style={{ fontSize: 11, color: t.dim, display: "flex", alignItems: "center", gap: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: acct(currentAccount)?.color, flexShrink: 0 }} />
+                  {acct(currentAccount)?.name}
+                </span>
+                <span style={{ fontSize: 26, fontWeight: 700, marginTop: 3 }}>{inr(curBal)}</span>
+              </div>
+            </div>
+          ) : (
             <div style={{ fontSize: 11, letterSpacing: 2, color: t.dim }}>{titles[view]}</div>
-            {view === "home" && <div style={{ fontSize: 26, fontWeight: 700, marginTop: 2 }}>{netWorth < 0 ? "−" : ""}₹{Math.abs(netWorth).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</div>}
-          </div>
+          )}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
           <SyncDot t={t} state={syncState} />
-          <button onClick={() => setDark(!dark)} style={{ ...styles.iconBtn, border: `1px solid ${t.line}`, color: t.text, background: t.card }}>{dark ? "☀" : "☾"}</button>
+          <button onClick={() => setDark(!dark)} aria-label="Toggle theme" style={{ width: 46, height: 46, borderRadius: 12, border: `1px solid ${t.line}`, color: t.text, background: t.card, cursor: "pointer", fontSize: 20 }}>{dark ? "☀" : "☾"}</button>
         </div>
       </div>
 
       <div style={styles.body}>
-        {view === "home" && <Home t={t} accounts={data.accounts} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} tx={data.tx} acct={acct} grp={grp} groups={data.groups} tagConfig={data.tagConfig} allTags={allTags} homeFilter={homeFilter} setHomeFilter={setHomeFilter} setTx={setTx} setAccounts={setAccounts} setGroups={setGroups} onEdit={(x) => { setEditing(x); setShowForm(true); }} onDelete={deleteTx} onViewInvoice={setViewingInvoice} />}
+        {view === "home" && <Home t={t} accounts={data.accounts} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} tx={data.tx} acct={acct} grp={grp} groups={data.groups} tagConfig={data.tagConfig} budgets={data.budgets || []} allTags={allTags} homeFilter={homeFilter} setHomeFilter={setHomeFilter} setTx={setTx} setAccounts={setAccounts} setGroups={setGroups} onEdit={(x) => { setEditing(x); setShowForm(true); }} onDelete={deleteTx} onViewInvoice={setViewingInvoice} />}
         {view === "analyze" && <Analyze t={t} tx={data.tx} acct={acct} grp={grp} accounts={data.accounts} groups={data.groups} tagConfig={data.tagConfig} />}
-        {view === "owed" && <Owed t={t} tx={data.tx} acct={acct} tagConfig={data.tagConfig} onAddRepayment={addRepayment} onRemoveRepayment={removeRepayment} onEdit={(x) => { setEditing(x); setShowForm(true); }} />}
-        {view === "settings" && <Settings t={t} accounts={data.accounts} setAccounts={setAccounts} groups={data.groups} setGroups={setGroups} tx={data.tx} setTx={setTx} allTags={allTags} tagConfig={data.tagConfig} setTagConfig={setTagConfig} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} onAddToGroup={openAdd} onSignOut={signOut} driveEmail={driveEmail} trips={data.trips} onOpenTrip={(id) => setActiveTripId(id)} addTrip={addTrip} />}
+        {view === "owed" && <Owed t={t} tx={data.tx} acct={acct} tagConfig={data.tagConfig} onAddRepayment={addRepayment} onRemoveRepayment={removeRepayment} onWriteOff={setWriteOff} onEdit={(x) => { setEditing(x); setShowForm(true); }} />}
+        {view === "settings" && <Settings t={t} accounts={data.accounts} setAccounts={setAccounts} groups={data.groups} setGroups={setGroups} tx={data.tx} setTx={setTx} allTags={allTags} tagConfig={data.tagConfig} setTagConfig={setTagConfig} budgets={data.budgets || []} setBudgets={setBudgets} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} onAddToGroup={openAdd} onSignOut={signOut} driveEmail={driveEmail} trips={data.trips} onOpenTrip={(id) => setActiveTripId(id)} addTrip={addTrip} />}
       </div>
 
       {showForm && <TxForm t={t} accounts={data.accounts} groups={data.groups} allTags={allTags} tagConfig={data.tagConfig} initial={editing} defaultAccount={currentAccount} defaultGroup={formGroup} onSave={saveTx} onClose={() => { setShowForm(false); setEditing(null); setFormGroup(null); }} />}
       {viewingInvoice && <InvoiceViewer t={t} invoice={viewingInvoice} onClose={() => setViewingInvoice(null)} />}
 
+      <SidePanel t={t} open={panelOpen} onClose={() => setPanelOpen(false)}
+        accounts={data.accounts} currentAccount={currentAccount} tx={data.tx} tagConfig={data.tagConfig}
+        onSelectAccount={(id) => { setCurrentAccount(id); setView("home"); setPanelOpen(false); }}
+        trips={data.trips} onOpenTrip={(id) => { setActiveTripId(id); setPanelOpen(false); }}
+        onNewTrip={() => { const tr = emptyTrip(); addTrip(tr); setActiveTripId(tr.id); setPanelOpen(false); }}
+        onOpenSettings={() => { setView("settings"); setPanelOpen(false); }} />
+
       <button style={{ ...styles.fab, background: t.accent }} onClick={() => openAdd(null)} aria-label="Add">+</button>
 
       <div style={{ ...styles.nav, background: t.bg, borderTop: `1px solid ${t.line}` }}>
-        {[["home", "Home", "▦"], ["analyze", "Analyze", "▤"], ["owed", "Owed", "↩"], ["settings", "Settings", "⚙"]].map(([id, label, icon]) => (
+        {[["home", "Home", "▦"], ["analyze", "Analyze", "▤"], ["owed", "Owed", "↩"]].map(([id, label, icon]) => (
           <button key={id} onClick={() => setView(id)} style={{ flex: 1, border: "none", background: "transparent", color: view === id ? t.accent : t.dim, cursor: "pointer", padding: "10px 0", fontSize: 11, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
             <span style={{ fontSize: 18 }}>{icon}</span>{label}
           </button>

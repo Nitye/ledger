@@ -1,7 +1,7 @@
 // pdf.js — generate a lean PDF statement from a filtered transaction list.
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { fmt, niceDate, received, outstanding, visibleTags, modeShort } from "./model";
+import { fmt, niceDate, received, outstanding, visibleTags, modeShort, isSuppressed } from "./model";
 
 // `scope` is a human label like "Personal · Goa trip · food".
 // `rows` is the already-filtered transaction array.
@@ -43,6 +43,7 @@ export function exportStatement({ scope, rows, totals, lookups }) {
   const body = rows.map((x) => {
     // combined entries: list items under the note
     let note = x.note || "—";
+    if (isSuppressed(x, tagConfig)) note += "  (suppressed)"; // v3: excluded from totals
     if (x.receiver) note += `  → ${x.receiver}`;
     if (Array.isArray(x.items) && x.items.length) {
       note += "\n" + x.items.map((i) => `  • ${i.note || "(item)"} — ${fmt(i.amount)}`).join("\n");
@@ -67,13 +68,15 @@ export function exportStatement({ scope, rows, totals, lookups }) {
     headStyles: { fillColor: [99, 102, 241], textColor: 255 },
     alternateRowStyles: { fillColor: [245, 245, 248] },
     margin: { left: 40, right: 40 },
+    // v3: grey out suppressed rows — visible but visibly not counted
+    didParseCell: (d) => { if (d.section === "body" && isSuppressed(rows[d.row.index], tagConfig)) d.cell.styles.textColor = [150, 150, 155]; },
   });
 
   let y = doc.lastAutoTable.finalY + 20;
   doc.setFont(undefined, "bold"); doc.setFontSize(11);
   doc.text(`Total (${rows.length} item${rows.length !== 1 ? "s" : ""}):  net ${totals.net < 0 ? "-" : ""}${fmt(totals.net)}`, 40, y);
   if (anyRepay) {
-    const owedSum = rows.reduce((s, x) => s + (x.type === "expense" ? outstanding(x) : 0), 0);
+    const owedSum = rows.reduce((s, x) => s + (x.type === "expense" && !isSuppressed(x, tagConfig) ? outstanding(x) : 0), 0);
     y += 16; doc.setTextColor(180, 120, 10);
     doc.text(`Still owed to you:  ${fmt(owedSum)}`, 40, y);
   }

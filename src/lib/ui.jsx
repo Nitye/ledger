@@ -2,8 +2,8 @@
 
 export function theme(dark) {
   return dark
-    ? { bg: "#0e0f13", card: "#1a1c22", text: "#f0f1f4", dim: "#8a8d96", line: "#2a2d35", hover: "#1a1c22", pill: "#23262e", accent: "#6366f1", green: "#34d399", red: "#f87171", amber: "#fbbf24", font: "system-ui, -apple-system, sans-serif" }
-    : { bg: "#faf9f7", card: "#ffffff", text: "#1a1c22", dim: "#7a7d86", line: "#e6e4df", hover: "#f3f1ee", pill: "#f0eeea", accent: "#6366f1", green: "#059669", red: "#dc2626", amber: "#d97706", font: "system-ui, -apple-system, sans-serif" };
+    ? { bg: "#0e0f13", card: "#1a1c22", text: "#f0f1f4", dim: "#8a8d96", line: "#2a2d35", hover: "#1a1c22", pill: "#23262e", accent: "#6366f1", green: "#34d399", red: "#f87171", amber: "#fbbf24", budgetTrack: "#43464f", font: "system-ui, -apple-system, sans-serif" }
+    : { bg: "#faf9f7", card: "#ffffff", text: "#1a1c22", dim: "#7a7d86", line: "#e6e4df", hover: "#f3f1ee", pill: "#f0eeea", accent: "#6366f1", green: "#059669", red: "#dc2626", amber: "#d97706", budgetTrack: "#1a1c22", font: "system-ui, -apple-system, sans-serif" };
 }
 
 export const COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#06b6d4", "#8b5cf6", "#14b8a6"];

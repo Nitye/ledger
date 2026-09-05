@@ -18,16 +18,28 @@ export const isGhost = (tag, tagConfig) => !!tagConfig?.[tag]?.ghost;
 export const visibleTags = (tags, tagConfig) => (tags || []).filter((tg) => !isGhost(tg, tagConfig));
 
 export const received = (x) => (x.repayments || []).reduce((s, r) => s + r.amount, 0);
-export const outstanding = (x) => Math.max(0, (x.owed || 0) - received(x));
+// v3: writeOff — the owner has accepted the received amount as final and forgiven
+// the remainder. Outstanding drops to 0 without any phantom repayment: recorded
+// repayments still hit the account, the written-off remainder simply never comes
+// back. Reversible by clearing the flag (see Owed tab).
+export const outstanding = (x) => (x.writeOff ? 0 : Math.max(0, (x.owed || 0) - received(x)));
 export const isRepayable = (x, tagConfig) => x.type === "expense" && x.tags.some((tg) => tagConfig[tg]?.repay);
+
+// v3: suppress tags — an expense carrying a suppress-enabled tag is treated as if
+// it never touched your money. It's excluded from every total (accounts, groups,
+// net worth, Analyze) but stays fully visible (greyed) in the UI and exports.
+// Only expenses can be suppressed; income/transfers are unaffected.
+export const isSuppressed = (x, tagConfig) => x.type === "expense" && (x.tags || []).some((tg) => tagConfig?.[tg]?.suppress);
 
 // balances: combined entries need no special handling — x.amount is always the
 // entry total (the sum of its items), so the math below is untouched from v1.
-export function balanceOf(tx, accId) {
+// tagConfig is optional (defaults to none) so old call sites stay valid; when
+// given, suppressed expenses (and their repayments) are skipped entirely.
+export function balanceOf(tx, accId, tagConfig = {}) {
   let bal = 0;
   for (const x of tx) {
     if (x.type === "income" && x.account === accId) bal += x.amount;
-    if (x.type === "expense" && x.account === accId) { bal -= x.amount; bal += received(x); }
+    if (x.type === "expense" && x.account === accId && !isSuppressed(x, tagConfig)) { bal -= x.amount; bal += received(x); }
     if (x.type === "transfer") {
       if (x.account === accId) bal -= x.amount;
       if (x.toAccount === accId) bal += x.amount;
@@ -36,6 +48,59 @@ export function balanceOf(tx, accId) {
   return bal;
 }
 
+// ── Budget helpers ────────────────────────────────────────────────────────────
+// A budget "head" is a spending category: { id, name, color, tags[], plans[],
+// activePlanId }. Each plan is a recurring window: { id, amount, periodNum,
+// periodUnit, startDate }. activePlanId may be null (head saved but nothing shown
+// on Home). Budgets reset every period; a period counts NET spend (amount minus
+// repayments) on non-suppressed expenses carrying any of the head's tags.
+export const BUDGET_UNITS = ["days", "weeks", "months"];
+
+function addPeriod(date, num, unit) {
+  const d = new Date(date);
+  if (unit === "weeks") d.setDate(d.getDate() + num * 7);
+  else if (unit === "months") d.setMonth(d.getMonth() + num);
+  else d.setDate(d.getDate() + num); // days
+  return d;
+}
+
+// The current recurring window [start, end) containing `now`. If `now` is before
+// the plan's start date, returns the very first window.
+export function currentBudgetPeriod(plan, now = new Date()) {
+  const num = Math.max(1, plan.periodNum || 1);
+  const unit = BUDGET_UNITS.includes(plan.periodUnit) ? plan.periodUnit : "months";
+  let start = new Date((plan.startDate || todayISO()) + "T00:00:00");
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let end = addPeriod(start, num, unit);
+  let guard = 0;
+  while (end <= today && guard++ < 100000) { start = end; end = addPeriod(start, num, unit); }
+  return { start, end };
+}
+
+const budgetISO = (d) => d.toISOString().slice(0, 10);
+
+// Net spend against a head's active period: non-suppressed expenses tagged with
+// any of the head's tags, dated within [start, end).
+export function budgetSpent(budget, plan, tx, tagConfig, now = new Date()) {
+  if (!plan) return 0;
+  const { start, end } = currentBudgetPeriod(plan, now);
+  const s = budgetISO(start), e = budgetISO(end);
+  const tags = budget.tags || [];
+  if (tags.length === 0) return 0;
+  let spent = 0;
+  for (const x of tx) {
+    if (x.type !== "expense" || isSuppressed(x, tagConfig)) continue;
+    if (!(x.tags || []).some((tg) => tags.includes(tg))) continue;
+    if (x.date < s || x.date >= e) continue;
+    spent += x.amount - received(x);
+  }
+  return spent;
+}
+
+export const budgetActivePlan = (b) => (b && b.activePlanId ? (b.plans || []).find((p) => p.id === b.activePlanId) : null) || null;
+// initials for the Home circle: first letter of up to two words ("Food+Drink" → "FD")
+export const budgetInitials = (name) => (name || "").split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "?";
+
 // ── empty / default state for a brand-new user ────────────────────────────────
 export function emptyState() {
   return {
@@ -43,6 +108,7 @@ export function emptyState() {
     accounts: [{ id: "a_" + uid(), name: "Personal", color: "#6366f1" }],
     groups: [],
     tagConfig: {},
+    budgets: [],
     tx: [],
   };
 }
@@ -57,6 +123,7 @@ export function migrateLedger(raw) {
   data.accounts ||= [];
   data.groups ||= [];
   data.tagConfig ||= {};
+  data.budgets ||= []; // v3: budgeting — optional, defaults to empty
   data.tx ||= [];
   const fromV1 = (data.version || 1) < 2;
   // v3: trips array — optional, defaults to empty
@@ -195,6 +262,7 @@ export function importTransactions(partials, { defaultAccount }) {
     tags: Array.isArray(p.tags) ? p.tags : [],
     date: p.date || todayISO(),
     owed: p.owed || 0,
+    writeOff: p.writeOff || false, // v3: owed remainder forgiven
     invoice: p.invoice || null,
     repayments: p.repayments || [],
     payments: Array.isArray(p.payments) && p.payments.length ? p.payments : null, // v2

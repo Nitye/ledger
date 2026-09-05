@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Modal, Seg, Stat, Toggle, COLORS, pill, inp, sel, lbl, primaryBtn, secondaryBtn, miniBtn } from "../lib/ui.jsx";
-import { fmt, niceDate, uid, received, outstanding, isRepayable, balanceOf, MODES, modeShort, visibleTags, isGhost, emptyTrip } from "../lib/model";
+import { fmt, niceDate, uid, todayISO, received, outstanding, isRepayable, isSuppressed, balanceOf, MODES, modeShort, visibleTags, isGhost, emptyTrip, BUDGET_UNITS, budgetSpent, budgetActivePlan, budgetInitials } from "../lib/model";
 import { exportStatement } from "../lib/pdf";
 import { receiptUrl } from "../lib/drive";
 
@@ -21,7 +21,7 @@ function presetRange(preset) {
   return { from: "", to: "" }; // "all"
 }
 
-export function Home({ t, accounts, currentAccount, setCurrentAccount, tx, acct, grp, groups, tagConfig, allTags, homeFilter, setHomeFilter, setTx, setAccounts, setGroups, onEdit, onDelete, onViewInvoice }) {
+export function Home({ t, accounts, currentAccount, setCurrentAccount, tx, acct, grp, groups, tagConfig, budgets = [], allTags, homeFilter, setHomeFilter, setTx, setAccounts, setGroups, onEdit, onDelete, onViewInvoice }) {
   const cur = acct(currentAccount);
   const { search = "", preset = "all", from = "", to = "" } = homeFilter;
   const patch = (p) => setHomeFilter((f) => ({ ...f, ...p }));
@@ -58,24 +58,9 @@ export function Home({ t, accounts, currentAccount, setCurrentAccount, tx, acct,
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 6 }}>
-        {accounts.map((a) => {
-          const active = a.id === currentAccount;
-          const bal = balanceOf(tx, a.id);
-          return (
-            <button key={a.id} onClick={() => setCurrentAccount(a.id)} style={{
-              flexShrink: 0, padding: "10px 16px", borderRadius: 14, cursor: "pointer",
-              border: `1px solid ${active ? a.color : t.line}`, background: active ? a.color + "22" : t.card,
-              color: t.text, textAlign: "left", minWidth: 130 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: a.color }} />
-                <span style={{ fontSize: 13, color: t.dim }}>{a.name}</span>
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>{bal < 0 ? "−" : ""}{fmt(bal)}</div>
-            </button>
-          );
-        })}
-      </div>
+      {/* accounts now live in the side panel; the active account drives this list.
+          budget circles — active plan of each head; scrolls past 3 */}
+      <BudgetRibbon t={t} budgets={budgets} tx={tx} tagConfig={tagConfig} />
 
       {/* search + date filter */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
@@ -143,6 +128,44 @@ export function Home({ t, accounts, currentAccount, setCurrentAccount, tx, acct,
         onApply={(gId) => { setTx((prev) => prev.map((x) => selected.has(x.id) ? { ...x, group: gId } : x)); finishBulk(); }} />}
       {picker === "account" && <BulkAccountPicker t={t} count={selected.size} accounts={accounts} currentAccount={currentAccount} setAccounts={setAccounts} onCancel={() => setPicker(null)}
         onApply={(aId) => { setTx((prev) => prev.map((x) => selected.has(x.id) ? { ...x, account: aId } : x)); finishBulk(); }} />}
+    </div>
+  );
+}
+
+// ── BUDGET RIBBON (Home) ────────────────────────────────────────────────────
+// One circle per head that has an active plan. The ring is the head colour for
+// the % of budget left and t.budgetTrack for the % used; initials sit inside,
+// amount left below. Three fit a screen; the row scrolls horizontally beyond that.
+function BudgetRibbon({ t, budgets, tx, tagConfig }) {
+  const active = (budgets || []).map((b) => ({ b, plan: budgetActivePlan(b) })).filter((x) => x.plan);
+  if (active.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: 10, justifyContent: "space-between", overflowX: "auto", padding: "8px 2px 4px" }}>
+      {active.map(({ b, plan }) => {
+        const spent = budgetSpent(b, plan, tx, tagConfig);
+        const left = (plan.amount || 0) - spent;
+        const pctLeft = plan.amount > 0 ? Math.max(0, Math.min(1, left / plan.amount)) : 0;
+        return <BudgetCircle key={b.id} t={t} name={b.name} color={b.color} left={left} pctLeft={pctLeft} />;
+      })}
+    </div>
+  );
+}
+
+// sized at ~70% of the original ribbon
+function BudgetCircle({ t, name, color, left, pctLeft }) {
+  const size = 62, sw = 5, r = (size - sw) / 2, C = 2 * Math.PI * r;
+  const over = left < 0;
+  return (
+    <div style={{ flexShrink: 0, width: size, textAlign: "center" }}>
+      <svg width={size} height={size} style={{ display: "block", margin: "0 auto" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={t.budgetTrack} strokeWidth={sw} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={over ? t.red : color} strokeWidth={sw}
+          strokeDasharray={`${pctLeft * C} ${C}`} strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: "stroke-dasharray .3s" }} />
+        <text x="50%" y="50%" dominantBaseline="central" textAnchor="middle" fontSize="14" fontWeight="700" fill={t.text}>{budgetInitials(name)}</text>
+      </svg>
+      <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: over ? t.red : t.text }}>{over ? "−" : ""}{fmt(left)}</div>
+      <div style={{ fontSize: 9, color: t.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
     </div>
   );
 }
@@ -302,6 +325,7 @@ export function ModeLine({ t, payments }) {
 function TxRow({ x, t, acct, grp, tagConfig, currentAccount, selectMode, selected, onToggleSelect, onEdit, onDelete, onViewInvoice }) {
   const [open, setOpen] = useState(false);
   const repay = isRepayable(x, tagConfig);
+  const suppressed = isSuppressed(x, tagConfig);
   const rec = received(x);
   const isCombined = Array.isArray(x.items) && x.items.length > 0; // v2
   let headline, sub = null, headColor = t.text, sign = "";
@@ -330,7 +354,7 @@ function TxRow({ x, t, acct, grp, tagConfig, currentAccount, selectMode, selecte
   );
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, borderBottom: `1px solid ${t.line}`, padding: "12px 8px", borderRadius: 10, cursor: "pointer", background: selectMode && selected ? t.accent + "14" : "transparent" }} onClick={() => selectMode ? onToggleSelect() : setOpen(!open)}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, borderBottom: `1px solid ${t.line}`, padding: "12px 8px", borderRadius: 10, cursor: "pointer", background: selectMode && selected ? t.accent + "14" : "transparent", opacity: suppressed ? 0.45 : 1 }} onClick={() => selectMode ? onToggleSelect() : setOpen(!open)}>
       {selectMode && (
         <span style={{ flexShrink: 0, marginTop: 2, width: 20, height: 20, borderRadius: 6, border: `1.5px solid ${selected ? t.accent : t.dim}`, background: selected ? t.accent : "transparent", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>{selected ? "✓" : ""}</span>
       )}
@@ -352,6 +376,7 @@ function TxRow({ x, t, acct, grp, tagConfig, currentAccount, selectMode, selecte
           <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 11, color: t.dim }}>{niceDate(x.date)}</span>
             {visibleTags(x.tags, tagConfig).map((tag) => <span key={tag} style={pill(t)}>{tag}</span>)}
+            {suppressed && <span title="excluded from all totals" style={pill(t)}>suppressed</span>}
             <ModeLine t={t} payments={x.payments} />
           </div>
         </div>
@@ -453,6 +478,7 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
     const byMode = modeFilter !== "all" && modeFilter !== "none";
     let income = 0, expense = 0, repaid = 0;
     for (const x of filtered) {
+      if (isSuppressed(x, tagConfig)) continue; // suppressed expenses count toward no total
       // v2: when slicing by one mode, split payments contribute only that
       // mode's share (e.g. ₹3,550 on card + −₹50 cash → card view counts 3,550)
       const share = byMode ? (x.payments || []).filter((p) => p.mode === modeFilter).reduce((s, p) => s + p.amount, 0) : x.amount;
@@ -460,7 +486,7 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
       if (x.type === "expense") { expense += share; if (!byMode) repaid += received(x); }
     }
     return { income, expense, repaid, net: income - expense + repaid, count: filtered.length };
-  }, [filtered, modeFilter]);
+  }, [filtered, modeFilter, tagConfig]);
 
   const scopeLabel = () => {
     const parts = [];
@@ -544,8 +570,10 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
         <span style={{ fontSize: 12, color: t.dim }}>{totals.count} matching</span>
         <button style={miniBtn(t)} disabled={!filtered.length} onClick={doExport}>⬇ Export PDF</button>
       </div>
-      {filtered.map((x) => (
-        <div key={x.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "10px 4px", display: "flex", justifyContent: "space-between" }}>
+      {filtered.map((x) => {
+        const supp = isSuppressed(x, tagConfig);
+        return (
+        <div key={x.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "10px 4px", display: "flex", justifyContent: "space-between", opacity: supp ? 0.45 : 1 }}>
           <div>
             <div style={{ fontSize: 14 }}>{x.note || "(no note)"}{x.receiver && <span style={{ fontSize: 12, color: t.dim, fontWeight: 300 }}> → {x.receiver}</span>}</div>
             <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
@@ -553,6 +581,7 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
               <span style={{ ...pill(t), fontSize: 10 }}>{acct(x.account)?.name}</span>
               {x.group && <span style={{ ...pill(t), fontSize: 10 }}>{grp(x.group)?.name}</span>}
               {visibleTags(x.tags, tagConfig).map((tg) => <span key={tg} style={{ ...pill(t), fontSize: 10 }}>{tg}</span>)}
+              {supp && <span title="excluded from all totals" style={{ ...pill(t), fontSize: 10 }}>suppressed</span>}
               <ModeLine t={t} payments={x.payments} />
             </div>
           </div>
@@ -560,25 +589,34 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
             {x.type === "income" ? "+" : x.type === "expense" ? "−" : "↔"}{fmt(x.type === "expense" ? x.amount - received(x) : x.amount)}
           </div>
         </div>
-      ))}
+      );
+      })}
     </div>
   );
 }
 
 // ── OWED ──────────────────────────────────────────────────────────────────────
-export function Owed({ t, tx, acct, tagConfig, onAddRepayment, onRemoveRepayment, onEdit }) {
-  const repayable = tx.filter((x) => isRepayable(x, tagConfig) && x.owed > 0);
+export function Owed({ t, tx, acct, tagConfig, onAddRepayment, onRemoveRepayment, onWriteOff, onEdit }) {
+  // suppressed expenses are treated as if they never left your account, so
+  // reimbursement tracking doesn't apply — they're excluded from Owed entirely.
+  const repayable = tx.filter((x) => isRepayable(x, tagConfig) && x.owed > 0 && !isSuppressed(x, tagConfig));
   const pending = repayable.filter((x) => outstanding(x) > 0);
   const done = repayable.filter((x) => outstanding(x) === 0);
   const totalOwed = pending.reduce((s, x) => s + outstanding(x), 0);
   const [logging, setLogging] = useState(null);
+  const PENDING_LIMIT = 10;
+  const [pendingOpen, setPendingOpen] = useState(false); // false → show first 10
+  const [settledOpen, setSettledOpen] = useState(false); // false → collapsed (0 shown)
+  const shownPending = pendingOpen ? pending : pending.slice(0, PENDING_LIMIT);
 
   return (
     <div>
       <Stat t={t} label="Outstanding (still owed to you)" value={fmt(totalOwed)} color={t.amber} big />
-      <div style={{ fontSize: 12, letterSpacing: 1, color: t.dim, margin: "18px 2px 8px" }}>PENDING</div>
+      <SectionHead t={t} label="PENDING" count={pending.length}
+        expandable={pending.length > PENDING_LIMIT} open={pendingOpen} onToggle={() => setPendingOpen((v) => !v)}
+        openText={`show all ${pending.length}`} closeText="show less" />
       {pending.length === 0 && <div style={{ color: t.dim, fontSize: 14, padding: 12 }}>Nothing outstanding. Nice.</div>}
-      {pending.map((x) => (
+      {shownPending.map((x) => (
         <div key={x.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "12px 4px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div style={{ flex: 1 }}>
@@ -595,28 +633,58 @@ export function Owed({ t, tx, acct, tagConfig, onAddRepayment, onRemoveRepayment
               <div style={{ fontSize: 11, color: t.dim }}>of {fmt(x.owed)}</div>
             </div>
           </div>
-          {logging === x.id
-            ? <RepaymentInput t={t} max={outstanding(x)} onCancel={() => setLogging(null)} onSubmit={(amt) => { onAddRepayment(x.id, amt); setLogging(null); }} />
-            : (
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button style={miniBtn(t)} onClick={() => setLogging(x.id)}>+ record repayment</button>
-                <button style={{ ...miniBtn(t), color: t.green, borderColor: t.green + "55" }} onClick={() => onAddRepayment(x.id, outstanding(x))}>✓ paid in full</button>
-              </div>
-            )}
+          {logging === x.id ? (
+            <RepaymentInput t={t} max={outstanding(x)} onCancel={() => setLogging(null)} onSubmit={(amt) => { onAddRepayment(x.id, amt); setLogging(null); }} />
+          ) : (
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <button style={miniBtn(t)} onClick={() => setLogging(x.id)}>+ record repayment</button>
+              <button style={{ ...miniBtn(t), color: t.green, borderColor: t.green + "55" }} onClick={() => onAddRepayment(x.id, outstanding(x))}>✓ paid in full</button>
+              <button style={{ ...miniBtn(t), color: t.amber, borderColor: t.amber + "55" }} onClick={() => onWriteOff(x.id, true)}>⊘ write off rest</button>
+            </div>
+          )}
         </div>
       ))}
 
-      <div style={{ fontSize: 12, letterSpacing: 1, color: t.dim, margin: "22px 2px 8px" }}>SETTLED</div>
+      <SectionHead t={t} label="SETTLED" count={done.length}
+        expandable={done.length > 0} open={settledOpen} onToggle={() => setSettledOpen((v) => !v)}
+        openText={`show ${done.length}`} closeText="hide" />
       {done.length === 0 && <div style={{ color: t.dim, fontSize: 14, padding: 12 }}>No history yet.</div>}
-      {done.map((x) => (
-        <div key={x.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "10px 4px", display: "flex", justifyContent: "space-between", opacity: 0.7 }}>
-          <div>
-            <div style={{ fontSize: 14 }}>{x.note}</div>
-            <div style={{ fontSize: 12, color: t.dim, marginTop: 3 }}>{niceDate(x.date)} · {acct(x.account)?.name}</div>
+      {settledOpen && done.map((x) => {
+        const wroteOff = !!x.writeOff && received(x) < (x.owed || 0);
+        const gotBack = received(x);
+        const forgiven = Math.max(0, (x.owed || 0) - gotBack);
+        return (
+          <div key={x.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "10px 4px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", opacity: 0.75 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14 }} onClick={() => onEdit(x)}>{x.note}</div>
+              <div style={{ fontSize: 12, color: t.dim, marginTop: 3 }}>
+                {niceDate(x.date)} · {acct(x.account)?.name}{wroteOff && gotBack > 0 ? ` · got back ${fmt(gotBack)} of ${fmt(x.owed)}` : ""}
+              </div>
+              {wroteOff && (
+                <button style={{ ...miniBtn(t), marginTop: 8 }} onClick={() => onWriteOff(x.id, false)}>↺ reopen</button>
+              )}
+            </div>
+            {wroteOff
+              ? <span style={{ color: t.amber, fontWeight: 600, marginLeft: 10, whiteSpace: "nowrap" }}>wrote off {fmt(forgiven)}</span>
+              : <span style={{ color: t.green, fontWeight: 600, marginLeft: 10, whiteSpace: "nowrap" }}>{fmt(x.owed)} ✓</span>}
           </div>
-          <span style={{ color: t.green, fontWeight: 600 }}>{fmt(x.owed)} ✓</span>
-        </div>
-      ))}
+        );
+      })}
+    </div>
+  );
+}
+
+// collapsible section header with a count badge and a down-arrow toggle
+function SectionHead({ t, label, count, expandable, open, onToggle, openText, closeText }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "22px 2px 8px" }}>
+      <span style={{ fontSize: 12, letterSpacing: 1, color: t.dim }}>{label}{count ? ` · ${count}` : ""}</span>
+      {expandable && (
+        <button onClick={onToggle} style={{ border: "none", background: "transparent", cursor: "pointer", color: t.accent, fontSize: 12, fontWeight: 600, padding: 4, display: "flex", alignItems: "center", gap: 5 }}>
+          {open ? closeText : openText}
+          <span style={{ display: "inline-block", fontSize: 11, transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -633,18 +701,19 @@ function RepaymentInput({ t, max, onCancel, onSubmit }) {
 }
 
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
-export function Settings({ t, accounts, setAccounts, groups, setGroups, tx, setTx, allTags, tagConfig, setTagConfig, currentAccount, setCurrentAccount, onAddToGroup, onSignOut, driveEmail, trips, onOpenTrip, addTrip }) {
+export function Settings({ t, accounts, setAccounts, groups, setGroups, tx, setTx, allTags, tagConfig, setTagConfig, budgets, setBudgets, currentAccount, setCurrentAccount, onAddToGroup, onSignOut, driveEmail, trips, onOpenTrip, addTrip }) {
   const [tab, setTab] = useState("accounts");
   return (
     <div>
       <div style={{ display: "flex", gap: 4, padding: 4, background: t.card, borderRadius: 12, border: `1px solid ${t.line}`, marginBottom: 18 }}>
-        {[["accounts", "Accounts"], ["groups", "Groups"], ["tags", "Tag features"]].map(([id, label]) => (
+        {[["accounts", "Accounts"], ["groups", "Groups"], ["tags", "Tags"], ["budgets", "Budgets"]].map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)} style={{ flex: 1, padding: 8, borderRadius: 9, border: "none", cursor: "pointer", background: tab === id ? t.accent : "transparent", color: tab === id ? "#fff" : t.dim, fontSize: 13, fontWeight: 600 }}>{label}</button>
         ))}
       </div>
-      {tab === "accounts" && <AccountsManager t={t} accounts={accounts} setAccounts={setAccounts} tx={tx} setTx={setTx} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} />}
-      {tab === "groups" && <GroupsManager t={t} groups={groups} setGroups={setGroups} tx={tx} setTx={setTx} allTags={allTags} onAddToGroup={onAddToGroup} />}
+      {tab === "accounts" && <AccountsManager t={t} accounts={accounts} setAccounts={setAccounts} tx={tx} setTx={setTx} tagConfig={tagConfig} currentAccount={currentAccount} setCurrentAccount={setCurrentAccount} />}
+      {tab === "groups" && <GroupsManager t={t} groups={groups} setGroups={setGroups} tx={tx} setTx={setTx} tagConfig={tagConfig} allTags={allTags} onAddToGroup={onAddToGroup} />}
       {tab === "tags" && <TagFeatures t={t} allTags={allTags} tagConfig={tagConfig} setTagConfig={setTagConfig} />}
+      {tab === "budgets" && <BudgetsManager t={t} budgets={budgets || []} setBudgets={setBudgets} allTags={allTags} tx={tx} tagConfig={tagConfig} />}
 
       {/* v3: trip manager entry point */}
       {trips && (
@@ -720,7 +789,7 @@ function CloseModal({ t, entity, others, kind, count, allowUngroup, onCancel, on
   );
 }
 
-function AccountsManager({ t, accounts, setAccounts, tx, setTx, currentAccount, setCurrentAccount }) {
+function AccountsManager({ t, accounts, setAccounts, tx, setTx, tagConfig, currentAccount, setCurrentAccount }) {
   const [editId, setEditId] = useState(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState(COLORS[0]);
@@ -746,7 +815,7 @@ function AccountsManager({ t, accounts, setAccounts, tx, setTx, currentAccount, 
         <div key={a.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "12px 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ width: 12, height: 12, borderRadius: "50%", background: a.color }} />
-            <div><div style={{ fontSize: 15, fontWeight: 500 }}>{a.name}</div><div style={{ fontSize: 13, color: t.dim }}>{balanceOf(tx, a.id) < 0 ? "−" : ""}{fmt(balanceOf(tx, a.id))}</div></div>
+            <div><div style={{ fontSize: 15, fontWeight: 500 }}>{a.name}</div><div style={{ fontSize: 13, color: t.dim }}>{balanceOf(tx, a.id, tagConfig) < 0 ? "−" : ""}{fmt(balanceOf(tx, a.id, tagConfig))}</div></div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <button style={miniBtn(t)} onClick={() => startEdit(a)}>Rename</button>
@@ -761,7 +830,7 @@ function AccountsManager({ t, accounts, setAccounts, tx, setTx, currentAccount, 
   );
 }
 
-function GroupsManager({ t, groups, setGroups, tx, setTx, allTags, onAddToGroup }) {
+function GroupsManager({ t, groups, setGroups, tx, setTx, tagConfig, allTags, onAddToGroup }) {
   const [editId, setEditId] = useState(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState(COLORS[5]);
@@ -791,7 +860,7 @@ function GroupsManager({ t, groups, setGroups, tx, setTx, allTags, onAddToGroup 
       {groups.length === 0 && <div style={{ color: t.dim, fontSize: 14, padding: 12 }}>No groups yet. Create one to collect related expenses.</div>}
       {groups.map((g) => {
         const count = tx.filter((x) => x.group === g.id).length;
-        const total = tx.filter((x) => x.group === g.id && x.type === "expense").reduce((s, x) => s + (x.amount - received(x)), 0);
+        const total = tx.filter((x) => x.group === g.id && x.type === "expense" && !isSuppressed(x, tagConfig)).reduce((s, x) => s + (x.amount - received(x)), 0);
         return (
           <div key={g.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "12px 4px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -844,6 +913,7 @@ function TagFeatures({ t, allTags, tagConfig, setTagConfig }) {
     { id: "proof", name: "Payment proof tracking", desc: "Same mechanics as invoices: transactions with an enabled tag get an option to attach a payment-proof image, stored in your Drive. A transaction can carry both an invoice and a proof." },
     { id: "receiver", name: "Receiver tagging", desc: "Transactions with an enabled tag get a Receiver field (who the money was for). Shown in light grey next to the note." },
     { id: "ghost", name: "Ghost tags", desc: "Ghost tags stay on transactions and keep powering any other features enabled on them, but the tag itself is hidden on Home, in Analyze (including the slice cloud), and in PDF exports. You'll only see it in the add/edit form." },
+    { id: "suppress", name: "Suppressed expenses", desc: "Expenses with an enabled tag are excluded from every total — account balances, net worth, group net spend, and Analyze — as if the money never left. They stay fully visible everywhere (greyed out, with a 'suppressed' marker), including PDF exports, but never count toward the sums. Only expenses are affected." },
   ];
   if (openFeature) {
     const f = FEATURES.find((x) => x.id === openFeature);
@@ -881,6 +951,226 @@ function TagFeatures({ t, allTags, tagConfig, setTagConfig }) {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ── BUDGETS MANAGER (Settings) ────────────────────────────────────────────────
+function BudgetsManager({ t, budgets, setBudgets, allTags, tx, tagConfig }) {
+  const [editHead, setEditHead] = useState(null); // "new" | headId | null
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(COLORS[2]);
+  const [tags, setTags] = useState([]);
+  const [planFor, setPlanFor] = useState(null); // { headId, plan } | null
+  const [expanded, setExpanded] = useState(() => new Set()); // collapsed by default
+  const toggleExp = (id) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const startNew = () => { setEditHead("new"); setName(""); setColor(COLORS[2]); setTags([]); };
+  const startEdit = (b) => { setEditHead(b.id); setName(b.name); setColor(b.color); setTags(b.tags || []); };
+  const saveHead = () => {
+    if (!name.trim()) return;
+    if (editHead === "new") { const id = "bud_" + uid(); setBudgets((p) => [...p, { id, name: name.trim(), color, tags, plans: [], activePlanId: null }]); setExpanded((s) => new Set(s).add(id)); }
+    else setBudgets((p) => p.map((b) => b.id === editHead ? { ...b, name: name.trim(), color, tags } : b));
+    setEditHead(null);
+  };
+  const deleteHead = (id) => setBudgets((p) => p.filter((b) => b.id !== id));
+  const setActive = (headId, planId) => setBudgets((p) => p.map((b) => b.id === headId ? { ...b, activePlanId: planId } : b));
+  const savePlan = (headId, plan) => {
+    setBudgets((p) => p.map((b) => {
+      if (b.id !== headId) return b;
+      const exists = (b.plans || []).some((pl) => pl.id === plan.id);
+      return { ...b, plans: exists ? b.plans.map((pl) => pl.id === plan.id ? plan : pl) : [...(b.plans || []), plan] };
+    }));
+    setPlanFor(null);
+  };
+  const deletePlan = (headId, planId) => setBudgets((p) => p.map((b) => b.id === headId ? { ...b, plans: (b.plans || []).filter((pl) => pl.id !== planId), activePlanId: b.activePlanId === planId ? null : b.activePlanId } : b));
+
+  const planLabel = (pl) => `${fmt(pl.amount)} · every ${pl.periodNum} ${pl.periodNum === 1 ? pl.periodUnit.slice(0, -1) : pl.periodUnit}`;
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: t.dim, marginBottom: 16, lineHeight: 1.5 }}>
+        Each head tracks net spend on its tags over a recurring period. Give a head one or more plans (amount + how often + start date), then pick one as active — the active plan shows as a circle on Home. Pick “None” to keep a head saved but hidden.
+      </div>
+
+      {budgets.length === 0 && <div style={{ color: t.dim, fontSize: 14, padding: 12 }}>No budget heads yet. Create one to start tracking.</div>}
+
+      {budgets.map((b) => {
+        const isOpen = expanded.has(b.id);
+        const ap = budgetActivePlan(b);
+        return (
+        <div key={b.id} style={{ border: `1px solid ${t.line}`, borderRadius: 14, marginBottom: 12, background: t.card, overflow: "hidden" }}>
+          {/* collapsed: only the head name + active plan summary show */}
+          <button onClick={() => toggleExp(b.id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 14, background: "transparent", border: "none", cursor: "pointer", color: t.text, textAlign: "left" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: b.color, flexShrink: 0 }} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</div>
+                <div style={{ fontSize: 12, color: ap ? t.dim : t.amber, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ap ? planLabel(ap) : "None active"}</div>
+              </div>
+            </div>
+            <span style={{ color: t.dim, fontSize: 16, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }}>›</span>
+          </button>
+
+          {isOpen && (
+            <div style={{ padding: "0 14px 14px" }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                <button style={miniBtn(t)} onClick={() => startEdit(b)}>Edit</button>
+                <button style={{ ...miniBtn(t), color: t.red, borderColor: t.red + "55" }} onClick={() => deleteHead(b.id)}>Delete</button>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {(b.tags || []).length ? b.tags.map((tg) => <span key={tg} style={pill(t)}>{tg}</span>)
+                  : <span style={{ fontSize: 12, color: t.amber }}>No tags — won’t track any spend yet</span>}
+              </div>
+              <div style={{ fontSize: 11, letterSpacing: 1, color: t.dim, margin: "14px 0 4px" }}>PLANS · pick the active one</div>
+              <PlanRadio t={t} label="None active" sub="Head stays saved, hidden from Home" on={!b.activePlanId} onClick={() => setActive(b.id, null)} />
+              {(b.plans || []).map((pl) => {
+                const spent = budgetSpent(b, pl, tx, tagConfig);
+                const left = (pl.amount || 0) - spent;
+                return (
+                  <PlanRadio key={pl.id} t={t} label={planLabel(pl)}
+                    sub={<span>{niceDate(pl.startDate)} <span style={{ fontSize: 10 }}>· {fmt(spent)} spent · {left < 0 ? "−" : ""}{fmt(left)} left</span></span>}
+                    on={b.activePlanId === pl.id} onClick={() => setActive(b.id, pl.id)}
+                    onEdit={() => setPlanFor({ headId: b.id, plan: pl })} onDelete={() => deletePlan(b.id, pl.id)} />
+                );
+              })}
+              <button style={{ ...secondaryBtn(t), width: "100%", marginTop: 10, color: t.accent, border: `1px dashed ${t.accent}88` }} onClick={() => setPlanFor({ headId: b.id, plan: null })}>+ Add plan</button>
+            </div>
+          )}
+        </div>
+        );
+      })}
+
+      {editHead ? (
+        <div style={{ marginTop: 4, padding: 14, border: `1px solid ${t.line}`, borderRadius: 14, background: t.card }}>
+          <div style={{ fontSize: 13, color: t.dim, marginBottom: 10 }}>{editHead === "new" ? "New budget head" : "Edit budget head"}</div>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Food + Drink" style={{ ...inp(t), marginBottom: 10 }} />
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            {COLORS.map((c) => <button key={c} onClick={() => setColor(c)} style={{ width: 26, height: 26, borderRadius: "50%", background: c, cursor: "pointer", border: color === c ? `2px solid ${t.text}` : "2px solid transparent" }} />)}
+          </div>
+          <div style={{ fontSize: 12, color: t.dim, marginBottom: 6 }}>Tags that count toward this budget</div>
+          <TagChooser t={t} allTags={allTags} value={tags} onChange={setTags} />
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button style={{ ...primaryBtn(t), flex: 1 }} onClick={saveHead}>Save</button>
+            <button style={secondaryBtn(t)} onClick={() => setEditHead(null)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button style={{ ...primaryBtn(t), width: "100%", marginTop: 4 }} onClick={startNew}>+ New budget head</button>
+      )}
+
+      {planFor && <PlanEditor t={t} plan={planFor.plan} onCancel={() => setPlanFor(null)} onSave={(pl) => savePlan(planFor.headId, pl)} />}
+    </div>
+  );
+}
+
+function PlanRadio({ t, label, sub, on, onClick, onEdit, onDelete }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 2px", borderBottom: `1px solid ${t.line}` }}>
+      <button onClick={onClick} aria-label="Set active" style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "50%", border: `2px solid ${on ? t.accent : t.dim}`, background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {on && <span style={{ width: 10, height: 10, borderRadius: "50%", background: t.accent }} />}
+      </button>
+      <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} onClick={onClick}>
+        <div style={{ fontSize: 14, fontWeight: 500 }}>{label}</div>
+        {sub && <div style={{ fontSize: 11.5, color: t.dim, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+      </div>
+      {onEdit && <button style={miniBtn(t)} onClick={onEdit}>Edit</button>}
+      {onDelete && <button style={{ ...miniBtn(t), color: t.red, borderColor: t.red + "55" }} onClick={onDelete}>✕</button>}
+    </div>
+  );
+}
+
+function TagChooser({ t, allTags, value, onChange }) {
+  const [v, setV] = useState("");
+  const add = (raw) => { const c = raw.trim().toLowerCase().replace(/\s+/g, "-"); if (c && !value.includes(c)) onChange([...value, c]); setV(""); };
+  const remove = (tg) => onChange(value.filter((x) => x !== tg));
+  const sug = allTags.filter((tg) => !value.includes(tg) && tg.includes(v.toLowerCase())).slice(0, 8);
+  return (
+    <div>
+      {value.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+        {value.map((tg) => <span key={tg} onClick={() => remove(tg)} style={{ ...pill(t), background: t.accent + "22", color: t.accent, cursor: "pointer" }}>{tg} ×</span>)}
+      </div>}
+      <input value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(v); } }}
+        placeholder="Type a tag, press Enter" style={{ ...inp(t), marginBottom: sug.length ? 6 : 0 }} />
+      {sug.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{sug.map((tg) => <span key={tg} style={{ ...pill(t), cursor: "pointer", opacity: 0.85 }} onClick={() => add(tg)}>+ {tg}</span>)}</div>}
+    </div>
+  );
+}
+
+function PlanEditor({ t, plan, onCancel, onSave }) {
+  const [amount, setAmount] = useState(plan?.amount != null ? String(plan.amount) : "");
+  const [num, setNum] = useState(plan?.periodNum ? String(plan.periodNum) : "1");
+  const [unit, setUnit] = useState(plan?.periodUnit || "months");
+  const [start, setStart] = useState(plan?.startDate || todayISO());
+  const save = () => {
+    const a = parseFloat(amount), n = parseInt(num, 10);
+    if (!(a > 0) || !(n > 0) || !start) return;
+    onSave({ id: plan?.id || "pl_" + uid(), amount: a, periodNum: n, periodUnit: unit, startDate: start });
+  };
+  return (
+    <Modal t={t} onClose={onCancel}>
+      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 14 }}>{plan ? "Edit plan" : "New plan"}</div>
+      <label style={lbl(t)}>Budget amount</label>
+      <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 5000" style={{ ...inp(t), marginBottom: 12 }} autoFocus />
+      <label style={lbl(t)}>Renews every</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <input type="number" inputMode="numeric" value={num} onChange={(e) => setNum(e.target.value)} style={{ ...inp(t), flex: 1 }} />
+        <select value={unit} onChange={(e) => setUnit(e.target.value)} style={{ ...sel(t), flex: 1 }}>
+          {BUDGET_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+        </select>
+      </div>
+      <label style={lbl(t)}>Starting from</label>
+      <input type="date" value={start} onChange={(e) => setStart(e.target.value)} style={{ ...inp(t), marginBottom: 16 }} />
+      <button style={{ ...primaryBtn(t), width: "100%" }} onClick={save}>Save plan</button>
+      <button style={{ ...secondaryBtn(t), width: "100%", marginTop: 8 }} onClick={onCancel}>Cancel</button>
+    </Modal>
+  );
+}
+
+// ── SIDE PANEL (left drawer) ──────────────────────────────────────────────────
+// Slide-in from the left. Lists accounts (tap to make active + jump to Home),
+// trips (tap to open), and a Settings entry. Balances honor suppression.
+export function SidePanel({ t, open, onClose, accounts, currentAccount, tx, tagConfig, onSelectAccount, trips = [], onOpenTrip, onNewTrip, onOpenSettings }) {
+  if (!open) return null;
+  const active = trips.filter((tr) => tr.status === "active");
+  const archived = trips.filter((tr) => tr.status === "archived");
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 200, display: "flex" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 300, maxWidth: "85vw", height: "100%", background: t.bg, borderRight: `1px solid ${t.line}`, padding: "20px 16px", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <span style={{ fontSize: 13, letterSpacing: 3, color: t.dim }}>LEDGER</span>
+          <button onClick={onClose} aria-label="Close menu" style={{ border: "none", background: "transparent", color: t.dim, fontSize: 24, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ fontSize: 11, letterSpacing: 1, color: t.dim, margin: "4px 2px 8px" }}>ACCOUNTS</div>
+        {accounts.map((a) => {
+          const bal = balanceOf(tx, a.id, tagConfig);
+          const on = a.id === currentAccount;
+          return (
+            <button key={a.id} onClick={() => onSelectAccount(a.id)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "11px 12px", borderRadius: 12, cursor: "pointer", textAlign: "left", color: t.text, border: `1px solid ${on ? a.color : t.line}`, background: on ? a.color + "22" : t.card, marginBottom: 6 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: a.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: t.dim, whiteSpace: "nowrap" }}>{bal < 0 ? "−" : ""}{fmt(bal)}</span>
+            </button>
+          );
+        })}
+
+        <div style={{ fontSize: 11, letterSpacing: 1, color: t.dim, margin: "18px 2px 8px" }}>TRIPS</div>
+        {active.length === 0 && archived.length === 0 && <div style={{ fontSize: 13, color: t.dim, padding: "2px 2px 8px" }}>No trips yet.</div>}
+        {[...active, ...archived].map((tr) => (
+          <button key={tr.id} onClick={() => onOpenTrip(tr.id)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 12px", borderRadius: 12, cursor: "pointer", textAlign: "left", color: t.text, border: `1px solid ${t.line}`, background: t.card, marginBottom: 6, opacity: tr.status === "archived" ? 0.6 : 1 }}>
+            <span style={{ fontSize: 14 }}>✈ {tr.name}</span>
+            {tr.status === "active" && <span style={{ ...pill(t), background: t.green + "22", color: t.green, fontSize: 10 }}>ACTIVE</span>}
+          </button>
+        ))}
+        <button onClick={onNewTrip} style={{ width: "100%", padding: 11, borderRadius: 12, cursor: "pointer", color: t.accent, border: `1px dashed ${t.accent}88`, background: "transparent", fontSize: 14, marginTop: 2 }}>+ New trip</button>
+
+        <div style={{ marginTop: "auto", paddingTop: 18 }}>
+          <button onClick={onOpenSettings} style={{ ...secondaryBtn(t), width: "100%" }}>⚙ Settings</button>
+        </div>
+      </div>
     </div>
   );
 }
