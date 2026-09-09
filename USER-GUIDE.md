@@ -51,9 +51,9 @@ An account is a bucket of money — think "Personal", "Cash", "Savings". Each ha
 its own running balance, and the app adds them all up into your **net worth**,
 shown at the top of the Home screen.
 
-You switch between accounts by tapping the cards at the top of Home. Moving money
-from one to another is a **transfer**, which keeps both balances honest without
-inventing spending that didn't happen.
+You switch between accounts from the **side panel** (the ☰ menu in the header).
+Moving money from one to another is a **transfer**, which keeps both balances
+honest without inventing spending that didn't happen.
 
 Create, rename, or close accounts in **Settings → Accounts**. Closing an account
 that still has transactions will ask what to do with them (move them elsewhere or
@@ -91,11 +91,19 @@ described further down.
 
 Home is where you land. Top to bottom:
 
-- **Net worth** and a **sync dot** in the header.
-- **Account cards** — tap to switch; the list below follows the account you pick.
-- **A search box** — start typing and the list narrows to transactions whose note
-  matches, updating on every keystroke. Type `lu` and both "Lunch" and "Luggage"
-  stay; delete a letter and the list widens again. Clear it with the ×.
+- **The header** holds a **menu button (☰)** on the left that opens the side
+  panel, your **net worth** and the **current account's balance** side by side,
+  a **sync dot**, and the light/dark toggle.
+  - **Tap the net worth / balance figures to hide them behind dots** (`••••••`) —
+    both hide and show together. The choice is remembered on that device, so they
+    stay hidden until you tap again. Handy in public or on a shared screen.
+- **Budget circles** — one ring per budget head with an active plan, showing how
+  much is left this period. **Tap a circle** to see the exact expenses that make
+  up its spend for the current period. (Set budgets up in Settings → Budgets.)
+- **A search box** — start typing and the list narrows on every keystroke. It
+  matches the **note** (type `lu` and both "Lunch" and "Luggage" stay) **and the
+  amount** (type `500` to find ₹500, ₹1,500, or a ₹500 item in a combined entry).
+  Clear it with the ×.
 - **Date filter chips** — All, 7 days, 30 days, Month, or Custom. Custom reveals
   two date boxes for an exact range. Your search text and date choice **stick**
   even if you visit another tab and come back.
@@ -103,6 +111,16 @@ Home is where you land. Top to bottom:
   If there are more, a **Show all** button at the bottom expands the full list
   (respecting whatever search and dates are active), and **Show less** collapses
   it again.
+
+Two round buttons float above the bottom navigation: **+** (bottom-right area) to
+add a transaction, and **⚙** (bottom-left) to jump to Settings.
+
+### Switching accounts — the side panel
+
+Accounts now live in the **side panel**: tap the **☰** menu button in the header.
+The panel lists every account with its balance (also masked when you've hidden
+balances), your trips, and a button to start a new trip. Tap an account to make it
+active and return to Home; the list below then follows that account.
 
 ### Reading a row
 
@@ -167,17 +185,20 @@ what and mark things settled.
 This only works for expenses tagged with a tag that has **repayment tracking**
 switched on (see below). Once it's on, those expenses let you record partial or
 full repayments over time, and the outstanding amount ticks down as money comes
-back.
+back. You can also **write off** the remainder — accept what you've received as
+final and forgive the rest — which drops the outstanding to zero without inventing
+a repayment. It's fully reversible: reopen it any time from the Settled list.
 
 ---
 
 ## Settings and tag features
 
-Settings has three sub-tabs — **Accounts**, **Groups**, and **Tag features** —
-plus your Drive sync info and a sign-out button.
+Settings has four sub-tabs — **Accounts**, **Groups**, **Tags**, and
+**Budgets** — plus a **Trips** section, your Drive sync info, and a sign-out
+button. (Reach Settings from the **⚙** button at the bottom-left of Home.)
 
-**Tag features** are optional powers you switch on *per tag*, so a tag does more
-than just label. They stack freely (one tag can have several):
+**Tag features** (the Tags sub-tab) are optional powers you switch on *per tag*,
+so a tag does more than just label. They stack freely (one tag can have several):
 
 - **Repayment tracking** — expenses with this tag track money owed and received,
   and show up in the Owed tab.
@@ -190,6 +211,42 @@ than just label. They stack freely (one tag can have several):
 - **Ghost tags** — the tag keeps powering any features above, but hides itself
   everywhere except the add/edit form. Useful for a tag you want working behind
   the scenes without cluttering your rows and exports.
+- **Suppressed expenses** — an expense with this tag is treated as if the money
+  never left your account: it's excluded from every total (account balances, net
+  worth, group net spend, budgets, and Analyze) but stays fully visible, greyed,
+  with a "suppressed" marker. Only expenses are affected.
+- **Tag attribution (divide)** — adds a field to attribute only *part* of an
+  amount to the tag. When Analyze slices by that single tag, the total counts just
+  the attributed portion — the full amount is still shown with the attributed part
+  greyed in brackets beside it (e.g. attribute ₹300 of a ₹500 spend → `500 (300)`,
+  counts 300). Budget heads honour it too. Leave the field blank to count the full
+  amount.
+- **Secondary date** — gives the transaction a *second* date field, separate from
+  the ledger date, for when a spend is logged on one day but belongs to another
+  (a hangout, the real purchase date, etc.). You set the field's **label prefix**
+  on the tag (e.g. "Hangout date" or "Actual expense date"); that label is what
+  appears on the form and on the row afterwards. Purely informational — it never
+  changes any totals.
+
+## Budgets
+
+A **budget head** is a spending category — "Food + Drink", "Transport" — defined
+by a set of tags. Give a head one or more **plans** (an amount, how often it
+renews, and a start date), then mark one **active**. The active plan shows as a
+tappable **circle on Home** tracking net spend on the head's tags for the current
+period; the ring empties as you spend and turns red if you go over.
+
+Suppressed expenses don't count. If a tag with **attribution** is involved, the
+head counts only the attributed share of that expense. Pick "None active" to keep
+a head saved but hidden from Home. Manage all of this in **Settings → Budgets**.
+
+## Trips
+
+A **trip** is a self-contained tracker for a journey — multiple currencies,
+shared wallets, members, and its own Home / Think / Analyze / Setup tabs, separate
+from your main ledger. Open or create trips from the side panel (☰) or from the
+Trips section in Settings. Inside a trip, the **⌂** button in the header (or the
+trip picker's "Back to Ledger") returns you to the main app.
 
 ---
 

@@ -1145,15 +1145,18 @@ export default function TripManager({ t, dark, setDark, syncState, trip, allTrip
 
       {/* header */}
       <div style={{ ...styles.header, borderBottom: `1px solid ${t.line}` }}>
-        <div>
-          <div style={{ fontSize: 11, letterSpacing: 2, color: t.dim }}>{titles[tab]}</div>
-          <div style={{ fontSize: 20, fontWeight: 700, marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
-            ✈ {trip.name}
-            <button onClick={() => setShowTripList(true)} style={{ background: "none", border: "none", color: t.dim, cursor: "pointer", fontSize: 14, padding: 0 }}>▾</button>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
+          <button onClick={onBackToLedger} aria-label="Back to Ledger" title="Back to Ledger" style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 40, height: 40, borderRadius: 12, border: `1px solid ${t.accent}55`, background: t.accent + "18", color: t.accent, fontSize: 20, cursor: "pointer" }}>⌂</button>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 11, letterSpacing: 2, color: t.dim }}>{titles[tab]}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
+              ✈ {trip.name}
+              <button onClick={() => setShowTripList(true)} style={{ background: "none", border: "none", color: t.dim, cursor: "pointer", fontSize: 14, padding: 0 }}>▾</button>
+            </div>
+            {tab === "home" && <div style={{ fontSize: 14, color: t.dim, marginTop: 2 }}>Total ≈ {fmtCurrency(totalBase, trip.baseCurrency)}</div>}
           </div>
-          {tab === "home" && <div style={{ fontSize: 14, color: t.dim, marginTop: 2 }}>Total ≈ {fmtCurrency(totalBase, trip.baseCurrency)}</div>}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
           <SyncDot t={t} state={syncState} />
           <button onClick={() => setDark(!dark)} style={{ ...styles.iconBtn, border: `1px solid ${t.line}`, color: t.text, background: t.card }}>{dark ? "☀" : "☾"}</button>
         </div>

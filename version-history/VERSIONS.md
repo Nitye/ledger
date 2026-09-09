@@ -6,6 +6,61 @@ single JSON file in the owner's own Google Drive.
 
 ---
 
+## v3 — September 2026
+
+**Data schema:** `version: 3`. Backward compatible with v1/v2 — migration only
+normalizes top-level containers (`budgets`, `trips`) and bumps the version; no
+transaction is rewritten, and every new field is optional. Before the first v3
+save on v2 data, a one-time safety copy is written to Drive as
+`ledger-data-backup-v2.json`.
+
+### New features
+
+- **Budgets** — recurring per-category spend limits. A *budget head* is defined
+  by a set of tags and carries one or more *plans* (amount + renewal period +
+  start date); one plan can be marked active. The active plan renders as a
+  circle on Home showing net spend for the current period. **Tapping a circle**
+  opens the exact expenses making up that period's spend. Suppressed expenses
+  are excluded; tag attribution is honoured.
+- **Trips** — a self-contained trip tracker (`TripManager.jsx`) with multiple
+  currencies and chained exchange rates, shared wallets, members, planned
+  spending, and its own Home / Think / Analyze / Setup tabs. Opened from the
+  side panel or Settings; a **home (⌂) button** in the trip header returns to
+  the main ledger.
+- **Side panel** — a left drawer (☰ in the header) for switching accounts and
+  opening/creating trips. Accounts moved here from the old Home cards.
+- **Suppressed expenses** *(tag feature)* — an expense with an enabled tag is
+  excluded from every total (balances, net worth, group spend, budgets, Analyze)
+  as if the money never left, while staying fully visible (greyed, marked
+  "suppressed") including in PDF exports.
+- **Tag attribution / "divide"** *(tag feature)* — a tag can hold a partial
+  share of a transaction's amount. When Analyze slices by that single tag, only
+  the attributed portion counts toward totals; the full amount is shown with the
+  attributed part greyed in brackets (e.g. `500 (300)`). Budget heads count the
+  attributed share too.
+- **Secondary date** *(tag feature)* — a tag can add a second, separately
+  labelled date field (e.g. "Hangout date") for spends logged on one day but
+  belonging to another. The label prefix is set per tag in Settings; the value
+  is purely informational and never affects totals.
+- **Owed write-off** — the outstanding remainder of a repayable expense can be
+  forgiven, dropping outstanding to zero without a phantom repayment. Fully
+  reversible via a reopen button in the Settled list.
+- **Hide balances** — tapping the net worth / account balance in the header
+  masks both behind dots. The preference is remembered per device (localStorage)
+  and also masks account balances in the side panel.
+
+### Improvements & fixes
+
+- **Home search matches amounts** — the search box now matches on amount as well
+  as note (digits are compared against the entry total and any combined-entry
+  item amounts).
+- **Responsive net worth header** — the net worth and account figures scale down
+  on narrow screens instead of overflowing.
+- **Settings reachable from Home** — a ⚙ button at the bottom-left; Settings
+  gained a Budgets sub-tab and a Trips section.
+
+---
+
 ## v2 — July 2026
 
 **Data schema:** `version: 2`. Fully backward compatible with v1 — every new

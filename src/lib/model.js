@@ -31,6 +31,33 @@ export const isRepayable = (x, tagConfig) => x.type === "expense" && x.tags.some
 // Only expenses can be suppressed; income/transfers are unaffected.
 export const isSuppressed = (x, tagConfig) => x.type === "expense" && (x.tags || []).some((tg) => tagConfig?.[tg]?.suppress);
 
+// v3: tag attribution ("divide") — a tag with this feature enabled can hold a
+// partial share of a transaction's amount (x.attributions[tag]). When Analyze
+// slices by that single tag, only the attributed portion counts toward the
+// totals; the full amount is still shown with the attributed part greyed next to
+// it. No attribution set (or feature off) → the full amount is used, as before.
+export const isAttributable = (tag, tagConfig) => !!tagConfig?.[tag]?.attribute;
+
+// v3: secondary date — a tag with this feature enabled gives its transactions a
+// second date field (x.altDate), separate from the ledger date. The field's
+// label is whatever prefix you set on the tag (tagConfig[tag].altDateLabel),
+// e.g. "Hangout date" or "Actual expense date". Purely informational.
+export const hasAltDate = (tag, tagConfig) => !!tagConfig?.[tag]?.altDate;
+// The label + date to show for a transaction, from the first alt-date tag on it.
+export function altDateInfo(x, tagConfig) {
+  const tg = (x.tags || []).find((t) => tagConfig?.[t]?.altDate);
+  if (!tg || !x.altDate) return null;
+  return { label: (tagConfig[tg]?.altDateLabel || "").trim() || "Linked date", date: x.altDate };
+}
+export function attributionFor(x, tag) {
+  const a = x.attributions;
+  if (a && tag && a[tag] != null && a[tag] !== "") {
+    const v = parseFloat(a[tag]);
+    if (v >= 0) return v;
+  }
+  return null;
+}
+
 // balances: combined entries need no special handling — x.amount is always the
 // entry total (the sum of its items), so the math below is untouched from v1.
 // tagConfig is optional (defaults to none) so old call sites stay valid; when
@@ -79,6 +106,19 @@ export function currentBudgetPeriod(plan, now = new Date()) {
 
 const budgetISO = (d) => d.toISOString().slice(0, 10);
 
+// How much of an expense counts toward a budget head (whose tags are headTags).
+// v3: if the expense divides across any of the head's tags (tag attribution),
+// only the sum of those attributed portions counts — capped at the entry amount,
+// and ignoring repayments (mirrors Analyze's single-tag behaviour). With no
+// attribution on the head's tags, the full net spend counts, as before.
+export function budgetShare(x, headTags) {
+  const attr = x.attributions;
+  const matched = attr ? headTags.filter((tg) => attributionFor(x, tg) != null) : [];
+  if (matched.length === 0) return x.amount - received(x);
+  const sum = matched.reduce((s, tg) => s + attributionFor(x, tg), 0);
+  return Math.min(sum, x.amount);
+}
+
 // Net spend against a head's active period: non-suppressed expenses tagged with
 // any of the head's tags, dated within [start, end).
 export function budgetSpent(budget, plan, tx, tagConfig, now = new Date()) {
@@ -92,9 +132,24 @@ export function budgetSpent(budget, plan, tx, tagConfig, now = new Date()) {
     if (x.type !== "expense" || isSuppressed(x, tagConfig)) continue;
     if (!(x.tags || []).some((tg) => tags.includes(tg))) continue;
     if (x.date < s || x.date >= e) continue;
-    spent += x.amount - received(x);
+    spent += budgetShare(x, tags);
   }
   return spent;
+}
+
+// The individual expenses that make up a head's spend for its active period —
+// same filter as budgetSpent, returned newest-first for display on Home.
+export function budgetEntries(budget, plan, tx, tagConfig, now = new Date()) {
+  if (!plan) return [];
+  const { start, end } = currentBudgetPeriod(plan, now);
+  const s = budgetISO(start), e = budgetISO(end);
+  const tags = budget.tags || [];
+  if (tags.length === 0) return [];
+  return tx
+    .filter((x) => x.type === "expense" && !isSuppressed(x, tagConfig)
+      && (x.tags || []).some((tg) => tags.includes(tg))
+      && x.date >= s && x.date < e)
+    .sort((a, b) => b.date.localeCompare(a.date));
 }
 
 export const budgetActivePlan = (b) => (b && b.activePlanId ? (b.plans || []).find((p) => p.id === b.activePlanId) : null) || null;
@@ -261,10 +316,12 @@ export function importTransactions(partials, { defaultAccount }) {
     note: p.note || "",
     tags: Array.isArray(p.tags) ? p.tags : [],
     date: p.date || todayISO(),
+    altDate: p.altDate || null, // v3: secondary date (tag feature)
     owed: p.owed || 0,
     writeOff: p.writeOff || false, // v3: owed remainder forgiven
     invoice: p.invoice || null,
     repayments: p.repayments || [],
+    attributions: p.attributions && Object.keys(p.attributions).length ? p.attributions : null, // v3: tag divide
     payments: Array.isArray(p.payments) && p.payments.length ? p.payments : null, // v2
     items: Array.isArray(p.items) && p.items.length ? p.items : null,             // v2
     receiver: p.receiver || null,                                                  // v2

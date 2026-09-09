@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Modal, Seg, Toggle, pill, inp, sel, lbl, primaryBtn, secondaryBtn, miniBtn } from "../lib/ui.jsx";
-import { fmt, todayISO, uid, MODES, paymentsSum, isGhost } from "../lib/model";
+import { fmt, todayISO, uid, MODES, paymentsSum, isGhost, isAttributable, hasAltDate } from "../lib/model";
 import { uploadReceipt, deleteReceipt } from "../lib/drive";
 
 export default function TxForm({ t, accounts, groups, allTags, tagConfig, initial, defaultAccount, defaultGroup, onSave, onClose }) {
@@ -13,6 +13,7 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
   const [tags, setTags] = useState(initial?.tags || []);
   const [tagInput, setTagInput] = useState("");
   const [date, setDate] = useState(initial?.date || todayISO());
+  const [altDate, setAltDate] = useState(initial?.altDate || ""); // v3: secondary date
   const [owed, setOwed] = useState(initial?.owed || "");
   const [invoice, setInvoice] = useState(initial?.invoice || null); // { driveId, name }
   const [proof, setProof] = useState(initial?.proof || null);       // { driveId, name } — v2
@@ -26,6 +27,21 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
   // v2: payment modes. [] = not set (how all v1 transactions look).
   const [payments, setPayments] = useState(initial?.payments?.length ? initial.payments.map((p) => ({ ...p })) : []);
   const [receiver, setReceiver] = useState(initial?.receiver || "");
+
+  // v3: tag attribution ("divide") — map tag → attributed amount (string in the
+  // form). Only tags with the attribute feature enabled show an input.
+  const [attributions, setAttributions] = useState(() => {
+    const a = {};
+    for (const [tg, v] of Object.entries(initial?.attributions || {})) a[tg] = String(v);
+    return a;
+  });
+  const setAttr = (tg, v) => setAttributions((m) => ({ ...m, [tg]: v }));
+  const attrTags = tags.filter((tg) => isAttributable(tg, tagConfig));
+
+  // v3: secondary date — first alt-date tag on the entry supplies the field label
+  const altTag = tags.find((tg) => hasAltDate(tg, tagConfig));
+  const altActive = !!altTag;
+  const altLabel = (altTag && (tagConfig[altTag]?.altDateLabel || "").trim()) || "Linked date";
 
   const isMulti = multi && type === "expense";
   const effAmount = isMulti ? items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0) : parseFloat(amount) || 0;
@@ -75,6 +91,13 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
   const submit = () => {
     if (!effAmount || effAmount <= 0 || (paymentsApply && !payOk)) return;
     const owedVal = repayActive ? (owed === "" ? effAmount : Math.min(parseFloat(owed) || 0, effAmount)) : 0;
+    // keep only attributions for tags still on the entry, still attribute-enabled,
+    // and with a real value entered
+    const cleanAttr = {};
+    for (const tg of attrTags) {
+      const raw = attributions[tg];
+      if (raw != null && raw !== "") { const v = parseFloat(raw); if (v >= 0) cleanAttr[tg] = Math.min(v, effAmount); }
+    }
     onSave({
       id: initial?.id || uid(),
       type, amount: effAmount, account,
@@ -85,6 +108,8 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
       invoice,
       proof: proofActive ? proof : (initial?.proof || null),
       receiver: receiverActive && receiver.trim() ? receiver.trim() : null,
+      attributions: Object.keys(cleanAttr).length ? cleanAttr : null,
+      altDate: altActive && altDate ? altDate : null,
       payments: paymentsApply && syncedPayments.length ? syncedPayments.map((p) => ({ ...p, amount: parseFloat(p.amount) || 0 })) : null,
       items: isMulti ? items.filter((i) => parseFloat(i.amount)).map((i) => ({ id: i.id || uid(), note: i.note || "", amount: parseFloat(i.amount) })) : null,
       repayments: initial?.repayments || [],
@@ -223,6 +248,21 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
         </div>
       )}
 
+      {attrTags.length > 0 && (
+        <div style={{ padding: 12, borderRadius: 12, background: t.accent + "11", border: `1px solid ${t.accent}44`, marginBottom: 14 }}>
+          <label style={lbl(t)}>Attribute to tag <span style={{ color: t.dim }}>(optional — how much of {effAmount ? fmt(effAmount) : "the total"} counts under each tag in Analyze)</span></label>
+          {attrTags.map((tg) => (
+            <div key={tg} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+              <span style={{ ...pill(t), background: t.accent + "22", color: t.accent, flexShrink: 0 }}>{tg}</span>
+              <input type="text" inputMode="decimal" value={attributions[tg] ?? ""}
+                onChange={(e) => { const v = e.target.value; if (v === "" || /^\d*\.?\d*$/.test(v)) setAttr(tg, v); }}
+                placeholder={`full (${effAmount ? fmt(effAmount) : "₹0"})`} style={{ ...inp(t), flex: 1 }} />
+            </div>
+          ))}
+          <div style={{ fontSize: 12, color: t.dim, marginTop: 2 }}>Leave blank to count the full amount. e.g. enter 300 to have only ₹300 of a ₹500 spend counted under that tag.</div>
+        </div>
+      )}
+
       {receiverActive && (
         <div style={{ padding: 12, borderRadius: 12, background: t.accent + "11", border: `1px solid ${t.accent}44`, marginBottom: 14 }}>
           <label style={lbl(t)}>Receiver — who was this for?</label>
@@ -255,7 +295,17 @@ export default function TxForm({ t, accounts, groups, allTags, tagConfig, initia
       )}
 
       <label style={lbl(t)}>Date</label>
-      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...inp(t), marginBottom: 18 }} />
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...inp(t), marginBottom: altActive ? 12 : 18 }} />
+
+      {altActive && (
+        <>
+          <label style={lbl(t)}>{altLabel} <span style={{ color: t.dim }}>(optional)</span></label>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18 }}>
+            <input type="date" value={altDate} onChange={(e) => setAltDate(e.target.value)} style={{ ...inp(t), flex: 1 }} />
+            {altDate && <button style={{ ...miniBtn(t), color: t.red, borderColor: t.red + "55" }} onClick={() => setAltDate("")}>Clear</button>}
+          </div>
+        </>
+      )}
 
       <button style={{ ...primaryBtn(t), width: "100%", opacity: effAmount > 0 && payOk ? 1 : 0.5 }} onClick={submit}>{initial ? "Save changes" : "Add"}</button>
       <button style={{ ...secondaryBtn(t), width: "100%", marginTop: 8 }} onClick={onClose}>Cancel</button>

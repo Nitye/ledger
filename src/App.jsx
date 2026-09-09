@@ -14,6 +14,13 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const t = theme(dark);
 
+  // privacy: mask net worth + account balances behind dots. Remembered locally
+  // (a device preference, not synced with the ledger). Tap the figures to toggle.
+  const [hideBalances, setHideBalances] = useState(() => {
+    try { return localStorage.getItem("hideBalances") === "1"; } catch { return false; }
+  });
+  useEffect(() => { try { localStorage.setItem("hideBalances", hideBalances ? "1" : "0"); } catch { /* ignore */ } }, [hideBalances]);
+
   const [unlocked, setUnlocked] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -195,18 +202,18 @@ export default function App() {
             ☰
           </button>
           {view === "home" ? (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
-              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+            <div onClick={() => setHideBalances((v) => !v)} title={hideBalances ? "Tap to show balances" : "Tap to hide balances"} style={{ display: "flex", alignItems: "flex-start", gap: "clamp(6px, 2.5vw, 12px)", minWidth: 0, flex: 1, cursor: "pointer" }}>
+              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, minWidth: 0 }}>
                 <span style={{ fontSize: 11, letterSpacing: 2, color: t.dim }}>NET WORTH</span>
-                <span style={{ fontSize: 26, fontWeight: 700, marginTop: 3 }}>{inr(netWorth)}</span>
+                <span style={{ fontSize: "clamp(17px, 5.5vw, 26px)", fontWeight: 700, marginTop: 3, whiteSpace: "nowrap" }}>{hideBalances ? "••••••" : inr(netWorth)}</span>
               </div>
-              <span style={{ color: t.dim, fontSize: 34, fontWeight: 200, lineHeight: 1, alignSelf: "flex-end" }}>|</span>
+              <span style={{ color: t.dim, fontSize: 34, fontWeight: 200, lineHeight: 1, alignSelf: "flex-end", flexShrink: 0 }}>|</span>
               <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, minWidth: 0 }}>
                 <span style={{ fontSize: 11, color: t.dim, display: "flex", alignItems: "center", gap: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: acct(currentAccount)?.color, flexShrink: 0 }} />
                   {acct(currentAccount)?.name}
                 </span>
-                <span style={{ fontSize: 26, fontWeight: 700, marginTop: 3 }}>{inr(curBal)}</span>
+                <span style={{ fontSize: "clamp(17px, 5.5vw, 26px)", fontWeight: 700, marginTop: 3, whiteSpace: "nowrap" }}>{hideBalances ? "••••••" : inr(curBal)}</span>
               </div>
             </div>
           ) : (
@@ -229,7 +236,7 @@ export default function App() {
       {showForm && <TxForm t={t} accounts={data.accounts} groups={data.groups} allTags={allTags} tagConfig={data.tagConfig} initial={editing} defaultAccount={currentAccount} defaultGroup={formGroup} onSave={saveTx} onClose={() => { setShowForm(false); setEditing(null); setFormGroup(null); }} />}
       {viewingInvoice && <InvoiceViewer t={t} invoice={viewingInvoice} onClose={() => setViewingInvoice(null)} />}
 
-      <SidePanel t={t} open={panelOpen} onClose={() => setPanelOpen(false)}
+      <SidePanel t={t} open={panelOpen} onClose={() => setPanelOpen(false)} hideBalances={hideBalances}
         accounts={data.accounts} currentAccount={currentAccount} tx={data.tx} tagConfig={data.tagConfig}
         onSelectAccount={(id) => { setCurrentAccount(id); setView("home"); setPanelOpen(false); }}
         trips={data.trips} onOpenTrip={(id) => { setActiveTripId(id); setPanelOpen(false); }}
@@ -237,6 +244,8 @@ export default function App() {
         onOpenSettings={() => { setView("settings"); setPanelOpen(false); }} />
 
       <button style={{ ...styles.fab, background: t.accent }} onClick={() => openAdd(null)} aria-label="Add">+</button>
+
+      <button style={{ ...styles.fab, background: t.card, color: t.text, border: `1px solid ${t.line}`, fontSize: 22, transform: "translateX(max(-202px, calc(-50vw + 48px)))" }} onClick={() => setView("settings")} aria-label="Settings">⚙</button>
 
       <div style={{ ...styles.nav, background: t.bg, borderTop: `1px solid ${t.line}` }}>
         {[["home", "Home", "▦"], ["analyze", "Analyze", "▤"], ["owed", "Owed", "↩"]].map(([id, label, icon]) => (

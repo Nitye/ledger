@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Modal, Seg, Stat, Toggle, COLORS, pill, inp, sel, lbl, primaryBtn, secondaryBtn, miniBtn } from "../lib/ui.jsx";
-import { fmt, niceDate, uid, todayISO, received, outstanding, isRepayable, isSuppressed, balanceOf, MODES, modeShort, visibleTags, isGhost, emptyTrip, BUDGET_UNITS, budgetSpent, budgetActivePlan, budgetInitials } from "../lib/model";
+import { fmt, niceDate, uid, todayISO, received, outstanding, isRepayable, isSuppressed, balanceOf, MODES, modeShort, visibleTags, isGhost, emptyTrip, BUDGET_UNITS, budgetSpent, budgetActivePlan, budgetInitials, budgetEntries, currentBudgetPeriod, attributionFor, budgetShare, altDateInfo } from "../lib/model";
 import { exportStatement } from "../lib/pdf";
 import { receiptUrl } from "../lib/drive";
 
@@ -12,6 +12,14 @@ import { receiptUrl } from "../lib/drive";
 const HOME_LIMIT = 15; // rows shown before the "Show all" toggle appears
 
 const iso = (d) => d.toISOString().slice(0, 10);
+// Amount search: match the entry total against the raw digits the user typed.
+// "500" matches ₹500, ₹1,500, ₹500.50; combined entries also match on any item.
+function matchesAmount(x, search) {
+  const q = search.replace(/[₹,\s]/g, "");
+  if (!q || !/^\d*\.?\d+$/.test(q)) return false;
+  const nums = [x.amount, ...(Array.isArray(x.items) ? x.items.map((i) => i.amount) : [])];
+  return nums.some((n) => String(n).includes(q));
+}
 function presetRange(preset) {
   const now = new Date();
   const back = (n) => { const d = new Date(now); d.setDate(d.getDate() - n); return iso(d); };
@@ -40,7 +48,7 @@ export function Home({ t, accounts, currentAccount, setCurrentAccount, tx, acct,
   const rows = useMemo(() => tx
     .filter((x) => x.account === currentAccount || x.toAccount === currentAccount)
     .filter((x) => (!from || x.date >= from) && (!to || x.date <= to))
-    .filter((x) => !search || (x.note || "").toLowerCase().includes(search.toLowerCase()))
+    .filter((x) => !search || (x.note || "").toLowerCase().includes(search.toLowerCase()) || matchesAmount(x, search))
     .sort((a, b) => b.date.localeCompare(a.date)),
     [tx, currentAccount, from, to, search]);
 
@@ -60,14 +68,14 @@ export function Home({ t, accounts, currentAccount, setCurrentAccount, tx, acct,
     <div>
       {/* accounts now live in the side panel; the active account drives this list.
           budget circles — active plan of each head; scrolls past 3 */}
-      <BudgetRibbon t={t} budgets={budgets} tx={tx} tagConfig={tagConfig} />
+      <BudgetRibbon t={t} budgets={budgets} tx={tx} tagConfig={tagConfig} acct={acct} grp={grp} />
 
       {/* search + date filter */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
         <div style={{ position: "relative" }}>
           <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.dim, fontSize: 14 }}>⌕</span>
           <input value={search} onChange={(e) => { setShowAll(false); patch({ search: e.target.value }); }}
-            placeholder="Search notes" style={{ ...inp(t), paddingLeft: 32, paddingRight: search ? 32 : 13 }} />
+            placeholder="Search notes or amount" style={{ ...inp(t), paddingLeft: 32, paddingRight: search ? 32 : 13 }} />
           {search && <button onClick={() => patch({ search: "" })} aria-label="Clear search" style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "transparent", color: t.dim, cursor: "pointer", fontSize: 16 }}>×</button>}
         </div>
         <div style={{ display: "flex", gap: 5 }}>
@@ -136,8 +144,9 @@ export function Home({ t, accounts, currentAccount, setCurrentAccount, tx, acct,
 // One circle per head that has an active plan. The ring is the head colour for
 // the % of budget left and t.budgetTrack for the % used; initials sit inside,
 // amount left below. Three fit a screen; the row scrolls horizontally beyond that.
-function BudgetRibbon({ t, budgets, tx, tagConfig }) {
+function BudgetRibbon({ t, budgets, tx, tagConfig, acct, grp }) {
   const active = (budgets || []).map((b) => ({ b, plan: budgetActivePlan(b) })).filter((x) => x.plan);
+  const [detail, setDetail] = useState(null); // { b, plan } | null
   if (active.length === 0) return null;
   return (
     <div style={{ display: "flex", gap: 10, justifyContent: "space-between", overflowX: "auto", padding: "8px 2px 4px" }}>
@@ -145,18 +154,72 @@ function BudgetRibbon({ t, budgets, tx, tagConfig }) {
         const spent = budgetSpent(b, plan, tx, tagConfig);
         const left = (plan.amount || 0) - spent;
         const pctLeft = plan.amount > 0 ? Math.max(0, Math.min(1, left / plan.amount)) : 0;
-        return <BudgetCircle key={b.id} t={t} name={b.name} color={b.color} left={left} pctLeft={pctLeft} />;
+        return <BudgetCircle key={b.id} t={t} name={b.name} color={b.color} left={left} pctLeft={pctLeft} onClick={() => setDetail({ b, plan })} />;
       })}
+      {detail && <BudgetDetail t={t} b={detail.b} plan={detail.plan} tx={tx} tagConfig={tagConfig} acct={acct} grp={grp} onClose={() => setDetail(null)} />}
     </div>
   );
 }
 
+// Tapping a head's circle opens this — the expenses that make up its spend for
+// the active plan's current period, with the period window and totals.
+function BudgetDetail({ t, b, plan, tx, tagConfig, acct, grp, onClose }) {
+  const entries = budgetEntries(b, plan, tx, tagConfig);
+  const spent = budgetSpent(b, plan, tx, tagConfig);
+  const left = (plan.amount || 0) - spent;
+  const { start, end } = currentBudgetPeriod(plan);
+  const endDisp = new Date(end.getTime() - 86400000); // window is [start, end); show last day
+  return (
+    <Modal t={t} onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <span style={{ width: 12, height: 12, borderRadius: "50%", background: b.color }} />
+        <span style={{ fontSize: 18, fontWeight: 700 }}>{b.name}</span>
+      </div>
+      <div style={{ fontSize: 12, color: t.dim, marginBottom: 14 }}>{niceDate(iso(start))} → {niceDate(iso(endDisp))}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+        <Stat t={t} label="Budget" value={fmt(plan.amount || 0)} color={t.text} />
+        <Stat t={t} label="Spent" value={fmt(spent)} color={t.text} />
+        <Stat t={t} label="Left" value={(left < 0 ? "−" : "") + fmt(left)} color={left < 0 ? t.red : t.green} />
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {(b.tags || []).map((tg) => <span key={tg} style={pill(t)}>{tg}</span>)}
+      </div>
+      {entries.length === 0
+        ? <div style={{ color: t.dim, fontSize: 14, padding: "12px 0" }}>No spending in this period yet.</div>
+        : entries.map((x) => {
+          const rec = received(x);
+          const share = budgetShare(x, b.tags || []);
+          const full = x.amount - rec;
+          const divided = Math.abs(share - full) > 0.005; // attribution reduced it
+          return (
+            <div key={x.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "10px 2px", display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14 }}>{x.note || "(no note)"}</div>
+                <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ fontSize: 10, color: t.dim }}>{niceDate(x.date)}</span>
+                  {acct && <span style={{ ...pill(t), fontSize: 10 }}>{acct(x.account)?.name}</span>}
+                  {x.group && grp && <span style={{ ...pill(t), fontSize: 10 }}>{grp(x.group)?.name}</span>}
+                  {visibleTags(x.tags, tagConfig).map((tg) => <span key={tg} style={{ ...pill(t), fontSize: 10 }}>{tg}</span>)}
+                </div>
+              </div>
+              <div style={{ fontWeight: 700, whiteSpace: "nowrap" }}>
+                −{fmt(full)}
+                {divided && <span title="counted toward this budget" style={{ color: t.dim, fontWeight: 500, fontSize: 12, marginLeft: 5 }}>({fmt(share)})</span>}
+              </div>
+            </div>
+          );
+        })}
+      <button style={{ ...secondaryBtn(t), width: "100%", marginTop: 16 }} onClick={onClose}>Close</button>
+    </Modal>
+  );
+}
+
 // sized at ~70% of the original ribbon
-function BudgetCircle({ t, name, color, left, pctLeft }) {
+function BudgetCircle({ t, name, color, left, pctLeft, onClick }) {
   const size = 62, sw = 5, r = (size - sw) / 2, C = 2 * Math.PI * r;
   const over = left < 0;
   return (
-    <div style={{ flexShrink: 0, width: size, textAlign: "center" }}>
+    <div onClick={onClick} role="button" tabIndex={0} style={{ flexShrink: 0, width: size, textAlign: "center", cursor: onClick ? "pointer" : "default" }}>
       <svg width={size} height={size} style={{ display: "block", margin: "0 auto" }}>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={t.budgetTrack} strokeWidth={sw} />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={over ? t.red : color} strokeWidth={sw}
@@ -375,6 +438,7 @@ function TxRow({ x, t, acct, grp, tagConfig, currentAccount, selectMode, selecte
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 11, color: t.dim }}>{niceDate(x.date)}</span>
+            {(() => { const ad = altDateInfo(x, tagConfig); return ad ? <span style={{ ...pill(t), fontSize: 11 }}>{ad.label}: {niceDate(ad.date)}</span> : null; })()}
             {visibleTags(x.tags, tagConfig).map((tag) => <span key={tag} style={pill(t)}>{tag}</span>)}
             {suppressed && <span title="excluded from all totals" style={pill(t)}>suppressed</span>}
             <ModeLine t={t} payments={x.payments} />
@@ -474,19 +538,26 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
     return negate ? !match : match;
   }), [scopeTx, selected, mode, negate, typeFilter, modeFilter]);
 
+  // v3: when exactly one tag is selected (and not negated), attribution kicks in
+  const singleTag = (!negate && selected.length === 1) ? selected[0] : null;
+
   const totals = useMemo(() => {
     const byMode = modeFilter !== "all" && modeFilter !== "none";
     let income = 0, expense = 0, repaid = 0;
     for (const x of filtered) {
       if (isSuppressed(x, tagConfig)) continue; // suppressed expenses count toward no total
+      // v3: a single-tag slice counts only the amount attributed to that tag
+      const attr = singleTag ? attributionFor(x, singleTag) : null;
       // v2: when slicing by one mode, split payments contribute only that
       // mode's share (e.g. ₹3,550 on card + −₹50 cash → card view counts 3,550)
-      const share = byMode ? (x.payments || []).filter((p) => p.mode === modeFilter).reduce((s, p) => s + p.amount, 0) : x.amount;
+      const share = byMode
+        ? (x.payments || []).filter((p) => p.mode === modeFilter).reduce((s, p) => s + p.amount, 0)
+        : (attr != null ? attr : x.amount);
       if (x.type === "income") income += share;
-      if (x.type === "expense") { expense += share; if (!byMode) repaid += received(x); }
+      if (x.type === "expense") { expense += share; if (!byMode && attr == null) repaid += received(x); }
     }
     return { income, expense, repaid, net: income - expense + repaid, count: filtered.length };
-  }, [filtered, modeFilter, tagConfig]);
+  }, [filtered, modeFilter, tagConfig, singleTag]);
 
   const scopeLabel = () => {
     const parts = [];
@@ -572,12 +643,14 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
       </div>
       {filtered.map((x) => {
         const supp = isSuppressed(x, tagConfig);
+        const attr = singleTag ? attributionFor(x, singleTag) : null;
         return (
         <div key={x.id} style={{ borderBottom: `1px solid ${t.line}`, padding: "10px 4px", display: "flex", justifyContent: "space-between", opacity: supp ? 0.45 : 1 }}>
           <div>
             <div style={{ fontSize: 14 }}>{x.note || "(no note)"}{x.receiver && <span style={{ fontSize: 12, color: t.dim, fontWeight: 300 }}> → {x.receiver}</span>}</div>
             <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap", alignItems: "center" }}>
               <span style={{ fontSize: 10, color: t.dim }}>{niceDate(x.date)}</span>
+              {(() => { const ad = altDateInfo(x, tagConfig); return ad ? <span style={{ ...pill(t), fontSize: 10 }}>{ad.label}: {niceDate(ad.date)}</span> : null; })()}
               <span style={{ ...pill(t), fontSize: 10 }}>{acct(x.account)?.name}</span>
               {x.group && <span style={{ ...pill(t), fontSize: 10 }}>{grp(x.group)?.name}</span>}
               {visibleTags(x.tags, tagConfig).map((tg) => <span key={tg} style={{ ...pill(t), fontSize: 10 }}>{tg}</span>)}
@@ -586,7 +659,8 @@ export function Analyze({ t, tx, acct, grp, accounts, groups, tagConfig }) {
             </div>
           </div>
           <div style={{ fontWeight: 700, color: x.type === "income" ? t.green : t.text, whiteSpace: "nowrap", marginLeft: 8 }}>
-            {x.type === "income" ? "+" : x.type === "expense" ? "−" : "↔"}{fmt(x.type === "expense" ? x.amount - received(x) : x.amount)}
+            {x.type === "income" ? "+" : x.type === "expense" ? "−" : "↔"}{fmt(attr != null ? x.amount : (x.type === "expense" ? x.amount - received(x) : x.amount))}
+            {attr != null && <span title="amount counted under this tag" style={{ color: t.dim, fontWeight: 500, fontSize: 12, marginLeft: 5 }}>({fmt(attr)})</span>}
           </div>
         </div>
       );
@@ -905,6 +979,7 @@ function BulkTagInput({ t, allTags, onApply }) {
 function TagFeatures({ t, allTags, tagConfig, setTagConfig }) {
   const [openFeature, setOpenFeature] = useState(null);
   const toggleKey = (tag, key) => setTagConfig((c) => ({ ...c, [tag]: { ...c[tag], [key]: !c[tag]?.[key] } }));
+  const setLabel = (tag, val) => setTagConfig((c) => ({ ...c, [tag]: { ...c[tag], altDateLabel: val } }));
   // each feature is a boolean key on tagConfig[tag]; features stack freely —
   // one tag can be ghost + proof + repay all at once.
   const FEATURES = [
@@ -914,6 +989,8 @@ function TagFeatures({ t, allTags, tagConfig, setTagConfig }) {
     { id: "receiver", name: "Receiver tagging", desc: "Transactions with an enabled tag get a Receiver field (who the money was for). Shown in light grey next to the note." },
     { id: "ghost", name: "Ghost tags", desc: "Ghost tags stay on transactions and keep powering any other features enabled on them, but the tag itself is hidden on Home, in Analyze (including the slice cloud), and in PDF exports. You'll only see it in the add/edit form." },
     { id: "suppress", name: "Suppressed expenses", desc: "Expenses with an enabled tag are excluded from every total — account balances, net worth, group net spend, and Analyze — as if the money never left. They stay fully visible everywhere (greyed out, with a 'suppressed' marker), including PDF exports, but never count toward the sums. Only expenses are affected." },
+    { id: "attribute", name: "Tag attribution (divide)", desc: "Transactions with an enabled tag get a field to attribute only part of the amount to that tag. When Analyze slices by that single tag, totals count just the attributed portion — the full amount is still shown, with the attributed part greyed in brackets beside it. e.g. attribute ₹300 of a ₹500 spend: Analyze shows 500 (300) and counts 300. Leave the field blank to count the full amount. Budget heads honour it too." },
+    { id: "altDate", name: "Secondary date", desc: "Transactions with an enabled tag get a second date field, separate from the ledger date — handy when the spend is logged on one day but belongs to another (e.g. a hangout). Set the label prefix per tag below (e.g. \"Hangout date\" or \"Actual expense date\"); that's what the field is called on the entry and where the date is shown afterwards. Purely informational — it doesn't change any totals." },
   ];
   if (openFeature) {
     const f = FEATURES.find((x) => x.id === openFeature);
@@ -924,18 +1001,28 @@ function TagFeatures({ t, allTags, tagConfig, setTagConfig }) {
         <div style={{ fontSize: 13, color: t.dim, marginBottom: 16, lineHeight: 1.5 }}>{f.desc}</div>
         <div style={{ fontSize: 12, letterSpacing: 1, color: t.dim, marginBottom: 4 }}>ENABLE PER TAG</div>
         {allTags.length === 0 && <div style={{ color: t.dim, fontSize: 14 }}>No tags yet — add some transactions first.</div>}
-        {allTags.map((tag) => (
-          <div key={tag} style={{ borderBottom: `1px solid ${t.line}`, padding: "12px 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 15 }}>{tag}</span>
-              {/* show the tag's other enabled features so combos are visible */}
-              {Object.entries(tagConfig[tag] || {}).filter(([k, v]) => v && k !== f.id).map(([k]) => (
-                <span key={k} style={{ ...pill(t), fontSize: 10 }}>{k}</span>
-              ))}
+        {allTags.map((tag) => {
+          const on = !!tagConfig[tag]?.[f.id];
+          return (
+          <div key={tag} style={{ borderBottom: `1px solid ${t.line}`, padding: "12px 4px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 15 }}>{tag}</span>
+                {/* show the tag's other enabled features so combos are visible */}
+                {Object.entries(tagConfig[tag] || {}).filter(([k, v]) => v === true && k !== f.id).map(([k]) => (
+                  <span key={k} style={{ ...pill(t), fontSize: 10 }}>{k}</span>
+                ))}
+              </div>
+              <Toggle t={t} on={on} onClick={() => toggleKey(tag, f.id)} />
             </div>
-            <Toggle t={t} on={!!tagConfig[tag]?.[f.id]} onClick={() => toggleKey(tag, f.id)} />
+            {/* v3: the secondary-date feature carries a per-tag label prefix */}
+            {f.id === "altDate" && on && (
+              <input value={tagConfig[tag]?.altDateLabel || ""} onChange={(e) => setLabel(tag, e.target.value)}
+                placeholder="Date label (e.g. Hangout date)" style={{ ...inp(t), marginTop: 10, fontSize: 14 }} />
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     );
   }
@@ -1130,7 +1217,7 @@ function PlanEditor({ t, plan, onCancel, onSave }) {
 // ── SIDE PANEL (left drawer) ──────────────────────────────────────────────────
 // Slide-in from the left. Lists accounts (tap to make active + jump to Home),
 // trips (tap to open), and a Settings entry. Balances honor suppression.
-export function SidePanel({ t, open, onClose, accounts, currentAccount, tx, tagConfig, onSelectAccount, trips = [], onOpenTrip, onNewTrip, onOpenSettings }) {
+export function SidePanel({ t, open, onClose, accounts, currentAccount, tx, tagConfig, hideBalances, onSelectAccount, trips = [], onOpenTrip, onNewTrip, onOpenSettings }) {
   if (!open) return null;
   const active = trips.filter((tr) => tr.status === "active");
   const archived = trips.filter((tr) => tr.status === "archived");
@@ -1152,7 +1239,7 @@ export function SidePanel({ t, open, onClose, accounts, currentAccount, tx, tagC
                 <span style={{ width: 9, height: 9, borderRadius: "50%", background: a.color, flexShrink: 0 }} />
                 <span style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
               </span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: t.dim, whiteSpace: "nowrap" }}>{bal < 0 ? "−" : ""}{fmt(bal)}</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: t.dim, whiteSpace: "nowrap" }}>{hideBalances ? "••••" : `${bal < 0 ? "−" : ""}${fmt(bal)}`}</span>
             </button>
           );
         })}
@@ -1166,10 +1253,6 @@ export function SidePanel({ t, open, onClose, accounts, currentAccount, tx, tagC
           </button>
         ))}
         <button onClick={onNewTrip} style={{ width: "100%", padding: 11, borderRadius: 12, cursor: "pointer", color: t.accent, border: `1px dashed ${t.accent}88`, background: "transparent", fontSize: 14, marginTop: 2 }}>+ New trip</button>
-
-        <div style={{ marginTop: "auto", paddingTop: 18 }}>
-          <button onClick={onOpenSettings} style={{ ...secondaryBtn(t), width: "100%" }}>⚙ Settings</button>
-        </div>
       </div>
     </div>
   );
